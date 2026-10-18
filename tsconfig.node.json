@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "noEmit": true
+  },
+  "include": [
+    "src/shared/**/*",
+    "src/core/**/*",
+    "src/cli/**/*",
+    "src/dev/**/*",
+    "src/main/**/*",
+    "src/preload/**/*",
+    "*.config.ts"
+  ]
+}

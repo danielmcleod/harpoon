@@ -1,0 +1,16 @@
+node_modules/
+out/
+dist/
+coverage/
+tests/.bin/
+*.log
+.DS_Store
+Thumbs.db
+.env
+.env.*
+!.env.example
+test-results/
+playwright-report/
+# Reference images (mockups, old logo) kept beside the repo, not in it.
+/*.jpg
+/test-results/

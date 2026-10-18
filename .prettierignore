@@ -1,0 +1,7 @@
+pnpm-lock.yaml
+out/
+dist/
+coverage/
+tests/.bin/
+tests/fixtures/
+src/core/adapters/*/protocol/

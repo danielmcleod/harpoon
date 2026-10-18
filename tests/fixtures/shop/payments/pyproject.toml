@@ -1,0 +1,4 @@
+[project]
+name = "payments"
+description = "Payment service: charges cards through Stripe, caches idempotency keys in Redis."
+dependencies = ["fastapi", "stripe", "redis"]

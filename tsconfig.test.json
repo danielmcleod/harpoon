@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "noEmit": true
+  },
+  "include": ["tests/**/*.ts", "src/shared/**/*", "src/core/**/*"],
+  "exclude": ["tests/fixtures/**", "tests/.bin/**", "tests/renderer/**", "tests/e2e/**"]
+}

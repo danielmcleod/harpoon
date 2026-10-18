@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.icns binary
+# Recordings must stay byte-exact (including CRLF cases).
+tests/fixtures/** -text

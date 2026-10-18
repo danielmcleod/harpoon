@@ -1,0 +1,1 @@
+{ "name": "orders", "description": "Order API: creates orders, charges them via payments, publishes order events.", "dependencies": { "express": "^4.19.0", "kafkajs": "^2.2.4", "pg": "^8.11.0" } }

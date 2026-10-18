@@ -1,0 +1,51 @@
+# electron-builder: NSIS / dmg / AppImage with hardened Electron fuses. `dependencies` is empty and electron-vite
+# bundles every import, so the app is out/** + package.json and ships no node_modules. Nothing here signs.
+# Must equal APP_ID in src/main/constants.ts.
+appId: com.harpoon.desktop
+productName: Harpoon
+copyright: Copyright © 2026 The Harpoon authors
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - out/**
+  - package.json
+asar: true
+npmRebuild: false
+publish: null
+
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  loadBrowserProcessSpecificV8Snapshot: false
+  # The renderer is served as app://harpoon/ (src/main/renderer-files.ts), never over file://.
+  grantFileProtocolExtraPrivileges: false
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+mac:
+  icon: build/icon.png
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+
+linux:
+  icon: build/icon.png
+  category: Development
+  target:
+    - AppImage

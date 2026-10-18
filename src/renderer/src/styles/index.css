@@ -1,0 +1,205 @@
+/* Renderer stylesheet: Tailwind 4 (CSS-first) with the design tokens mapped to colour utilities, a class-based dark
+   variant, and the base layer (system font stack, focus ring, reduced motion). */
+@import 'tailwindcss';
+@import './tokens.css';
+@import '@xyflow/react/dist/base.css';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-canvas: var(--canvas);
+  --color-panel: var(--panel);
+
+  --color-hx-cyan: var(--hx-cyan);
+  --color-hx-violet: var(--hx-violet);
+  --color-hx-blue: var(--hx-blue);
+  --color-hx-green: var(--hx-green);
+  --color-hx-amber: var(--hx-amber);
+  --color-hx-rose: var(--hx-rose);
+  --color-hx-add: var(--hx-add);
+  --color-hx-mod: var(--hx-mod);
+  --color-hx-del: var(--hx-del);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans:
+    'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', 'Noto Sans', Arial, sans-serif;
+  --font-mono:
+    ui-monospace, 'Cascadia Mono', 'Cascadia Code', 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+/* An inner scroll region: a wheel at its ends never scrolls what is behind it. */
+@utility scroll-region {
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: var(--border);
+  }
+
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  html,
+  body {
+    overflow: hidden;
+  }
+  #root {
+    overflow: clip;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    user-select: none;
+  }
+
+  input,
+  textarea,
+  [contenteditable='true'],
+  .selectable {
+    user-select: text;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--primary) 30%, transparent);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklab, var(--muted-foreground) 30%, transparent);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/* ---- canvas ------------------------------------------------------------------------------------------------- */
+
+.react-flow__handle.hx-anchor {
+  width: 1px;
+  height: 1px;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.react-flow__handle.hx-port {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--ring);
+  border: 2px solid var(--canvas);
+  opacity: 0;
+  transform: translate(-50%, -50%);
+  transition: opacity 0.12s;
+  cursor: crosshair;
+}
+.react-flow__node:hover .hx-port,
+.react-flow.connecting .hx-port {
+  opacity: 0.95;
+}
+
+.react-flow__edge.selected,
+.react-flow__edge:focus {
+  outline: none;
+}
+.react-flow__node:focus-visible {
+  outline: none;
+}
+.react-flow__connection-path {
+  stroke: var(--ring);
+  stroke-width: 2;
+  stroke-dasharray: 5 4;
+}
+.react-flow__pane {
+  cursor: default;
+}
+.react-flow__pane.dragging {
+  cursor: grabbing;
+}
+
+/* React Flow paints its own background in dark mode: use the canvas token in both themes. */
+.react-flow {
+  --xy-background-color: var(--canvas);
+  --xy-edge-label-color: var(--foreground);
+}
+
+/* Connect mode: a crosshair over the canvas and hover rings on candidate targets. */
+.hx-connecting .react-flow__pane,
+.hx-connecting .react-flow__node {
+  cursor: crosshair;
+}
+.hx-connecting .react-flow__node:hover {
+  filter: drop-shadow(0 0 10px var(--ring));
+}
+/* The selected node shows its docking ports, so dragging a connection is discoverable. */
+.react-flow__node.selected .hx-port {
+  opacity: 0.7;
+}

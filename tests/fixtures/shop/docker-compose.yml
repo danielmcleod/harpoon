@@ -1,0 +1,28 @@
+services:
+  gateway:
+    image: nginx:1.27
+    ports: ["8080:80"]
+    depends_on: [orders, payments]
+  orders:
+    build: ./orders
+    environment:
+      DATABASE_URL: postgres://shop:shop@orders-db:5432/orders
+      PAYMENTS_URL: http://payments:8000
+      KAFKA_BROKERS: kafka:9092
+    depends_on: [orders-db, kafka]
+  payments:
+    build: ./payments
+    environment:
+      REDIS_URL: redis://cache:6379
+      STRIPE_API_KEY: ${STRIPE_API_KEY}
+    depends_on: [cache]
+  notifier:
+    build: ./notifier
+    environment:
+      KAFKA_BROKERS: kafka:9092
+  orders-db:
+    image: postgres:16
+  cache:
+    image: redis:7
+  kafka:
+    image: redpanda/redpanda:v24.1.1

@@ -1,0 +1,7 @@
+nodeLinker: hoisted
+onlyBuiltDependencies:
+  - electron
+  - esbuild
+# The Agent SDK is installed for its types only; skip the bundled Claude binaries it lists as optional.
+ignoredOptionalDependencies:
+  - '@anthropic-ai/claude-agent-sdk-*'
