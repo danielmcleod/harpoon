@@ -226,6 +226,7 @@ export class ClaudeRun implements RunHandle {
       mode: o.mode,
       step: o.step,
       model: o.model,
+      effort: o.effort,
       sessionId: this.#presetSession,
       resumeId,
       nativeRules: o.allowRules.filter((r) => r.vendor === CLAUDE_VENDOR).flatMap((r) => r.nativeRules ?? []),

@@ -14,6 +14,7 @@ import type { HomePaths } from './home.ts'
 import type { Logger } from './log.ts'
 import { ProjectManager } from './project/manager.ts'
 import { McpHost } from './ai/mcp-host.ts'
+import { ExternalMcp } from './ai/external.ts'
 import { ProposalStore } from './ai/proposals.ts'
 import { Providers } from './ai/providers.ts'
 import { AiRunner } from './ai/runner.ts'
@@ -52,6 +53,8 @@ export async function createCore(o: CoreOptions): Promise<Core> {
   const providers = new Providers({ probeCwd: join(paths.tmpDir, 'probe-cwd'), log: o.log.child('providers') })
   const mcp = new McpHost(o.log.child('mcp'))
   const ai = new AiRunner({ providers, mcp, bus, log: o.log.child('ai'), projects, proposals, runsDir: paths.runsDir, localRepoPaths: (id) => state.state.repoPaths[id] ?? {}, notionServer: (id) => state.state.notionServers[id] ?? null })
+  const external = new ExternalMcp({ state, ai, log: o.log.child('external-mcp') })
+  await external.start()
   bus.on((e) => {
     if (e.kind === 'project-opened') void proposals.load(e.project.root)
     else if (e.kind === 'project-closed') void proposals.load(null)
@@ -84,6 +87,8 @@ export async function createCore(o: CoreOptions): Promise<Core> {
     },
     'repo.scan': (r) => discoverRepos(r.dir),
     'ai.providers': (r) => providers.views(r.force === true),
+    'mcp.external.get': () => Promise.resolve(external.view()),
+    'mcp.external.set': (r) => external.set(r),
     'ai.start': (r) => ai.start(r),
     'ai.send': (r) => ai.send(r.runId, r.prompt),
     'ai.cancel': (r) => Promise.resolve(ai.cancel(r.runId)),
@@ -168,6 +173,7 @@ export async function createCore(o: CoreOptions): Promise<Core> {
     invoke,
     shutdown: async () => {
       await ai.shutdown()
+      await external.stop()
       await mcp.close()
       await projects.close(false)
     },

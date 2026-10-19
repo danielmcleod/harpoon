@@ -1,6 +1,7 @@
 // Project settings: name and description, the repositories the project spans (linked in the project file, located
 // per machine), teams, roadmap phases and data classes. Later milestones add rules and publishing here.
 import { NotionTab } from './NotionTab.tsx'
+import { AiTab } from './AiTab.tsx'
 import { RulesTab } from './RulesTab.tsx'
 import { Dialog } from 'radix-ui'
 import { FolderGit2, FolderSearch, Plus, Trash2, X } from 'lucide-react'
@@ -19,9 +20,9 @@ import { useModel } from '../canvas/useScene.ts'
 import { TextArea, TextInput } from '../panels/inspector/fields.tsx'
 import { DataClassesEditor, PhasesEditor, TeamsEditor } from '../panels/inspector/ProjectVocab.tsx'
 
-export const SETTINGS_TABS = ['general', 'repos', 'teams', 'phases', 'data', 'rules', 'notion'] as const
+export const SETTINGS_TABS = ['general', 'repos', 'teams', 'phases', 'data', 'rules', 'notion', 'ai'] as const
 export type SettingsTab = (typeof SETTINGS_TABS)[number]
-const TAB_LABEL: Record<SettingsTab, string> = { general: 'General', repos: 'Repositories', teams: 'Teams', phases: 'Roadmap phases', data: 'Data classes', rules: 'Rules & guidelines', notion: 'Notion' }
+const TAB_LABEL: Record<SettingsTab, string> = { general: 'General', repos: 'Repositories', teams: 'Teams', phases: 'Roadmap phases', data: 'Data classes', rules: 'Rules & guidelines', notion: 'Notion', ai: 'AI' }
 
 export function openSettings(tab: SettingsTab = 'general'): void {
   setUi({ settings: tab })
@@ -54,7 +55,7 @@ export function ProjectSettings(): React.JSX.Element | null {
               ))}
             </TabsList>
             <div className="min-h-0 flex-1 overflow-y-auto pt-2">
-              {readOnly && <p className="mb-2 text-xs text-muted-foreground">Read-only in Docs mode. Switch to Editor to change settings.</p>}
+              {readOnly && tab !== 'ai' && <p className="mb-2 text-xs text-muted-foreground">Read-only in Docs mode. Switch to Editor to change settings.</p>}
               <TabsContent value="general">
                 <General readOnly={readOnly} />
               </TabsContent>
@@ -68,6 +69,9 @@ export function ProjectSettings(): React.JSX.Element | null {
               <TabsContent value="phases">
                 <Intro>Split planned work into phases, then set a phase on planned nodes, connectors and features. Problems flags work planned before something it depends on.</Intro>
                 <PhasesEditor readOnly={readOnly} />
+              </TabsContent>
+              <TabsContent value="ai">
+                <AiTab />
               </TabsContent>
               <TabsContent value="notion">
                 <NotionTab readOnly={readOnly} />

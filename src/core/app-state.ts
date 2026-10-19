@@ -4,14 +4,19 @@ import { rename } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { z } from 'zod'
-import type { AppState, AppStatePatch, RecentProject } from '../shared/ipc.ts'
-import { NODE_STYLES, THEMES } from '../shared/ipc.ts'
+import type { AiDefaults, AppState, AppStatePatch, RecentProject } from '../shared/ipc.ts'
+import { AI_VENDORS, NODE_STYLES, THEMES } from '../shared/ipc.ts'
 import { readJsonFile, writeJsonAtomic } from './store/atomic.ts'
 
 export const RECENT_MAX = 12
 
 /** New local designs go here unless the user picked another folder. */
 export const DEFAULT_DESIGNS_DIR = join(homedir(), 'Documents', 'Harpoon')
+
+/** Outside agents' MCP endpoint listens here unless the user picks another port. */
+export const DEFAULT_EXTERNAL_MCP_PORT = 47821
+
+const DEFAULT_AI: AiDefaults = { vendor: null, claude: { model: null, effort: null }, codex: { model: null, effort: null } }
 
 export const DEFAULT_APP_STATE: AppState = {
   schemaVersion: 1,
@@ -21,7 +26,11 @@ export const DEFAULT_APP_STATE: AppState = {
   repoPaths: {},
   designsDir: DEFAULT_DESIGNS_DIR,
   notionServers: {},
+  ai: DEFAULT_AI,
+  externalMcp: { enabled: false, port: DEFAULT_EXTERNAL_MCP_PORT, token: null },
 }
+
+const PickZ = z.object({ model: z.string().max(200).nullable().catch(null), effort: z.string().max(20).nullable().catch(null) }).catch({ model: null, effort: null })
 
 const AppStateZ = z.object({
   schemaVersion: z.literal(1),
@@ -34,6 +43,11 @@ const AppStateZ = z.object({
   repoPaths: z.record(z.string(), z.record(z.string(), z.string())).catch({}).default({}),
   designsDir: z.string().min(1).catch(DEFAULT_DESIGNS_DIR).default(DEFAULT_DESIGNS_DIR),
   notionServers: z.record(z.string(), z.string()).catch({}).default({}),
+  ai: z.object({ vendor: z.enum(AI_VENDORS).nullable().catch(null), claude: PickZ, codex: PickZ }).catch(DEFAULT_AI).default(DEFAULT_AI),
+  externalMcp: z
+    .object({ enabled: z.boolean().catch(false), port: z.number().int().min(1024).max(65535).catch(DEFAULT_EXTERNAL_MCP_PORT), token: z.string().min(32).max(200).nullable().catch(null) })
+    .catch({ enabled: false, port: DEFAULT_EXTERNAL_MCP_PORT, token: null })
+    .default({ enabled: false, port: DEFAULT_EXTERNAL_MCP_PORT, token: null }),
 })
 
 export class AppStateStore {
@@ -68,9 +82,16 @@ export class AppStateStore {
       ...(p.theme !== undefined ? { theme: p.theme } : {}),
       ...(p.nodeStyle !== undefined ? { nodeStyle: p.nodeStyle } : {}),
       ...(p.designsDir !== undefined ? { designsDir: p.designsDir } : {}),
+      ...(p.ai !== undefined ? { ai: p.ai } : {}),
     }
     await writeJsonAtomic(this.#file, this.#state)
     return this.#state
+  }
+
+  async setExternalMcp(p: Partial<AppState['externalMcp']>): Promise<AppState['externalMcp']> {
+    this.#state = { ...this.#state, externalMcp: { ...this.#state.externalMcp, ...p } }
+    await writeJsonAtomic(this.#file, this.#state)
+    return this.#state.externalMcp
   }
 
   /** Remember (or forget, with null) where this machine keeps one of a project's repos. */

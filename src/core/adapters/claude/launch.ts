@@ -47,6 +47,7 @@ export interface ArgvInput {
   mode: Mode
   step: StartStep
   model?: string | null | undefined
+  effort?: string | null | undefined
   /** Fresh edit sessions: `--session-id=<uuid>`. */
   sessionId?: string | undefined
   /** Fix reuse / resume: `--resume=<id>` and never `--session-id` (C08e: the CLI rejects both). */
@@ -135,6 +136,7 @@ export function buildArgv(i: ArgvInput): string[] {
     permissionModeFor(i.route, i.mode),
   ]
   if (i.model !== undefined && i.model !== null && i.model !== '') a.push('--model', i.model)
+  if (i.effort !== undefined && i.effort !== null && /^[a-z]+$/.test(i.effort)) a.push('--effort', i.effort)
   switch (i.route) {
     case 'plan':
       if (STRICT_MCP_READONLY) a.push('--strict-mcp-config')

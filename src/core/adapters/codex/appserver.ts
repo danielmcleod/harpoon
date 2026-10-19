@@ -370,6 +370,7 @@ export class CodexAppServerRun extends CodexRunBase {
         threadId,
         prompt: o.prompt,
         model: override,
+        effort: o.effort ?? undefined,
         collaborationMode,
         outputSchema: o.outputSchema,
       })

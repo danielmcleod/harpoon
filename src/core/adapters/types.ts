@@ -139,6 +139,8 @@ export interface StartOptions {
   systemAppend?: string
   /** `null` = omit the flag and use the vendor default. */
   model?: string | null
+  /** Reasoning effort (one of the model's listed levels); `null` = the vendor default. */
+  effort?: string | null
   mode: Mode
   planNative: boolean
   /** Pre-assigned id (Claude `--session-id`), persisted by the engine before spawn. */

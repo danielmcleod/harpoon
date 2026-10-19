@@ -48,7 +48,7 @@ export interface UiState {
   /** Roadmap: the phase whose end state the canvas shows (null: today). */
   asOf: string | null
   /** Project settings dialog: the open tab (null: closed). */
-  settings: 'general' | 'repos' | 'teams' | 'phases' | 'data' | 'rules' | 'notion' | null
+  settings: 'general' | 'repos' | 'teams' | 'phases' | 'data' | 'rules' | 'notion' | 'ai' | null
   /** Help dialog: the open topic (null: closed). */
   help: 'start' | 'diagram' | 'views' | 'ai' | 'rules' | 'saving' | 'keys' | null
   /** Bumped to ask the canvas to fit the view (after open, focus change). */
@@ -61,6 +61,10 @@ export interface AiState {
   providers: ProviderView[] | null
   vendor: AiVendor
   model: string | null
+  /** Reasoning effort for new runs (null: the CLI's default). */
+  effort: string | null
+  /** Import: the linked repositories to read (null: all of them). */
+  importRepos: string[] | null
   mode: AiMode
   runs: Record<string, AiRunView>
   activeRunId: string | null
@@ -95,6 +99,8 @@ export const INITIAL_AI: AiState = {
   providers: null,
   vendor: 'claude',
   model: null,
+  effort: null,
+  importRepos: null,
   mode: 'plan',
   runs: {},
   activeRunId: null,
@@ -133,7 +139,7 @@ export const useStore = create<StoreState>(() => ({
   ready: false,
   save: { status: 'saved', at: null, error: null },
   theme: { theme: 'dark', resolved: 'dark' },
-  prefs: { schemaVersion: 1, theme: 'dark', nodeStyle: 'flat', recentProjects: [], repoPaths: {}, designsDir: '', notionServers: {} },
+  prefs: { schemaVersion: 1, theme: 'dark', nodeStyle: 'flat', recentProjects: [], repoPaths: {}, designsDir: '', notionServers: {}, ai: { vendor: null, claude: { model: null, effort: null }, codex: { model: null, effort: null } }, externalMcp: { enabled: false, port: 47821, token: null } },
   project: null,
   ui: INITIAL_UI,
   ai: INITIAL_AI,

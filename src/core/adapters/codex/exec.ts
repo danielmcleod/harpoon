@@ -93,6 +93,7 @@ export class CodexExecRun extends CodexRunBase {
       mode: o.mode,
       cwd: o.cwd,
       model: o.model,
+      effort: o.effort,
       outFile,
       schemaFile,
       resumeId: this.resumeId,

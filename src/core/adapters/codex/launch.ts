@@ -191,6 +191,7 @@ export interface ExecArgvInput {
   mode: 'readonly' | 'autoedit' | 'full'
   cwd: string
   model?: string | null | undefined
+  effort?: string | null | undefined
   /** `-o` target (the final message; written only when the turn completes). */
   outFile: string
   /** `--output-schema` file (X17 catalog). */
@@ -229,6 +230,7 @@ export function execArgv(i: ExecArgvInput): string[] {
     `approvals_reviewer=${tomlString('user')}`,
   ]
   if (model !== undefined) a.push('-m', model)
+  if (i.effort !== undefined && i.effort !== null && /^[a-z]+$/.test(i.effort)) a.push('-c', `model_reasoning_effort=${tomlString(i.effort)}`)
   if (i.local !== undefined) a.push(...localProviderArgs(i.local))
   // X17: the catalog refresh searches the web (Codex cannot limit hosts; the answer's sources are validated after).
   if (i.step === 'catalog') a.push('-c', `web_search=${tomlString('live')}`)

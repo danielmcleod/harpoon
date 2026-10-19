@@ -116,6 +116,8 @@ export function turnStartParams(o: {
    * does not list (default-model.ts). Absent: the thread's own model.
    */
   model?: string | undefined
+  /** The reasoning effort for this turn and the ones after it (absent: the thread's). */
+  effort?: string | undefined
   collaborationMode?: CollaborationMode | undefined
   outputSchema?: object | undefined
 }): TurnStartParams {
@@ -123,6 +125,7 @@ export function turnStartParams(o: {
     threadId: o.threadId,
     input: [{ type: 'text', text: o.prompt, text_elements: [] }],
     ...(o.model !== undefined ? { model: o.model } : {}),
+    ...(o.effort !== undefined ? { effort: o.effort } : {}),
     ...(o.collaborationMode !== undefined ? { collaborationMode: o.collaborationMode } : {}),
     ...(o.outputSchema !== undefined ? { outputSchema: strictOutputSchema(o.outputSchema) } : {}),
   }

@@ -51,7 +51,7 @@ export class Providers {
             ok: r.ok,
             version: r.version ?? null,
             account: r.account === undefined ? null : [r.account.method, r.account.plan].filter(Boolean).join(' · '),
-            models: r.models.map((m) => ({ id: m.id, label: m.label ?? m.id, isDefault: m.isDefault === true })),
+            models: r.models.map((m) => ({ id: m.id, label: m.label ?? m.id, isDefault: m.isDefault === true, resolved: m.aliases?.[0] ?? null, efforts: m.efforts ?? [] })),
             issue: r.ok ? null : blocking !== undefined ? `${blocking.title}. ${blocking.detail}` : 'Not available.',
           }
         } catch (err) {

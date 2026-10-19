@@ -86,12 +86,38 @@ export interface AppState {
   designsDir: string
   /** The Notion MCP server this machine publishes through, per project id (never taken from the shared project). */
   notionServers: Record<string, string>
+  /** The AI panel's starting vendor, model and effort on this machine. */
+  ai: AiDefaults
+  /** Outside agents' access to Harpoon's MCP tools (off unless turned on). */
+  externalMcp: { enabled: boolean; port: number; token: string | null }
+}
+
+/** Per vendor: the model and effort runs start with (null: the CLI's own default). */
+export interface AiDefaults {
+  vendor: AiVendor | null
+  claude: { model: string | null; effort: string | null }
+  codex: { model: string | null; effort: string | null }
+}
+
+/** Outside agents' MCP endpoint, as Settings shows it. */
+export interface ExternalMcpView {
+  enabled: boolean
+  /** The fixed port it listens on (so a saved agent configuration keeps working). */
+  port: number
+  /** Listening now (false when off, or when the port was taken). */
+  running: boolean
+  url: string | null
+  token: string | null
+  error: string | null
+  /** When an outside agent last called a tool (ms since epoch). */
+  lastCall: number | null
 }
 
 export interface AppStatePatch {
   theme?: Theme
   nodeStyle?: NodeStyle
   designsDir?: string
+  ai?: AiDefaults
 }
 
 /** A git repository found on disk. */
@@ -210,6 +236,8 @@ export interface AiContext {
   /** notes: the note to summarize or extract from (or the series to prepare the next meeting of). */
   notePath?: string
   noteTask?: 'summarize' | 'extract' | 'agenda'
+  /** import: only these linked repositories (absent: all of them). */
+  repoIds?: string[]
 }
 
 export interface ProviderView {
@@ -219,7 +247,8 @@ export interface ProviderView {
   ok: boolean
   version: string | null
   account: string | null
-  models: { id: string; label: string; isDefault: boolean }[]
+  /** `resolved`: the full model id an alias such as "opus" stands for; `efforts`: the levels it accepts. */
+  models: { id: string; label: string; isDefault: boolean; resolved: string | null; efforts: string[] }[]
   /** Why it is not usable, in plain words. */
   issue: string | null
 }
@@ -233,6 +262,7 @@ export interface AiSelection {
 export interface AiStartRequest {
   vendor: AiVendor
   model?: string | null
+  effort?: string | null
   mode: AiMode
   prompt: string
   selection: AiSelection
@@ -274,6 +304,9 @@ export interface AiRunView {
   id: string
   vendor: AiVendor
   model: string | null
+  effort: string | null
+  /** Driven by an outside agent over MCP (no CLI of Harpoon's own). */
+  external: boolean
   mode: AiMode
   status: AiRunStatus
   title: string
@@ -589,6 +622,9 @@ export interface Commands {
   'repo.scan': { req: { dir: string }; res: DiscoveredRepo[] }
   // AI
   'ai.providers': { req: { force?: boolean }; res: ProviderView[] }
+  'mcp.external.get': { req: void; res: ExternalMcpView }
+  /** Turn outside access on or off, move it to another port, or issue a new token (the old one stops working). */
+  'mcp.external.set': { req: { enabled?: boolean; port?: number; regenerate?: boolean }; res: ExternalMcpView }
   'ai.start': { req: AiStartRequest; res: AiRunView }
   'ai.send': { req: { runId: string; prompt: string }; res: AiRunView }
   'ai.cancel': { req: { runId: string }; res: void }
@@ -675,6 +711,8 @@ export const COMMAND_AREA = {
   'repo.setLocalPath': 'project',
   'repo.scan': 'project',
   'ai.providers': 'ai',
+  'mcp.external.get': 'ai',
+  'mcp.external.set': 'ai',
   'ai.start': 'ai',
   'ai.send': 'ai',
   'ai.cancel': 'ai',

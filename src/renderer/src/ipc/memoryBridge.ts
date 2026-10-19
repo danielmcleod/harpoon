@@ -37,7 +37,7 @@ export function installMemoryBridge(o: MemoryBridgeOptions): void {
       for (const l of listeners) l([e])
     }, 5)
   }
-  let state: AppState = { schemaVersion: 1, theme: 'dark', nodeStyle: 'flat', recentProjects: [], repoPaths: {}, designsDir: '', notionServers: {}, ...o.state }
+  let state: AppState = { schemaVersion: 1, theme: 'dark', nodeStyle: 'flat', recentProjects: [], repoPaths: {}, designsDir: '', notionServers: {}, ai: { vendor: null, claude: { model: null, effort: null }, codex: { model: null, effort: null } }, externalMcp: { enabled: false, port: 47821, token: null }, ...o.state }
   let project: ProjectView | null = o.project
   let views: unknown[] = o.views ?? []
   const undo: { ops: Op[]; inverse: Op[]; at: number }[] = []

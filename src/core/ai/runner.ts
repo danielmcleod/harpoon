@@ -29,10 +29,12 @@ import type { AiContext, DecisionRecord, SolutionSet } from '../../shared/ipc.ts
 import type { Model } from '../../shared/model/schema.ts'
 import { MCP_SERVER_NAME, MCP_TOKEN_ENV } from './mcp-host.ts'
 import type { McpHost, McpRoute } from './mcp-host.ts'
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { SYSTEM_BRIEF, firstPrompt } from './prompts.ts'
 import type { ProposalStore } from './proposals.ts'
 import type { Providers } from './providers.ts'
 import { registerTools } from './tools.ts'
+import type { ToolContext } from './tools.ts'
 import { userCodexMcpServers } from './codex-isolation.ts'
 import { applySeed } from '../ingest/apply-seed.ts'
 import { seedRepository } from '../ingest/seed.ts'
@@ -106,6 +108,8 @@ export function repoBrief(root: string, repos: readonly { id: string; name: stri
 
 export class AiRunner {
   readonly #runs = new Map<string, RunState>()
+  #external: RunState | null = null
+  #externalLastCall: number | null = null
   readonly #o: AiRunnerDeps
 
   constructor(o: AiRunnerDeps) {
@@ -120,8 +124,11 @@ export class AiRunner {
     const session = this.#o.projects.require()
     const meta = session.model.meta
     const resolved = await resolveRepos(session.root, meta.repos, this.#o.localRepoPaths(meta.id))
+    // Import: only the repositories the user picked (absent or empty: all of them).
+    const picked = req.mode === 'import' && req.context?.repoIds !== undefined && req.context.repoIds.length > 0 ? new Set(req.context.repoIds) : null
     const repos = resolved.flatMap((r) => {
       const ref = meta.repos.find((x) => x.id === r.id)
+      if (picked !== null && !picked.has(r.id)) return []
       return r.path === null || ref === undefined ? [] : [{ id: r.id, name: ref.name, role: ref.role, path: r.path }]
     })
     const id = newRequestId('ai')
@@ -130,6 +137,8 @@ export class AiRunner {
         id,
         vendor: req.vendor,
         model: req.model ?? null,
+        effort: req.effort ?? null,
+        external: false,
         mode: req.mode,
         status: 'starting',
         title: req.prompt.trim().split('\n')[0]?.slice(0, 80) || defaultTitle(req.mode),
@@ -191,10 +200,127 @@ export class AiRunner {
     this.#runs.set(id, state)
     this.#emit(state, true)
     const prompt = firstPrompt({ mode: req.mode, prompt: req.prompt, selection: req.selection, model: session.model }) + repoBrief(session.root, repos)
-    const missing = resolved.filter((r) => r.path === null).map((r) => meta.repos.find((x) => x.id === r.id)?.name ?? r.id)
+    const missing = resolved.filter((r) => r.path === null && (picked === null || picked.has(r.id))).map((r) => meta.repos.find((x) => x.id === r.id)?.name ?? r.id)
     if (missing.length > 0) this.#activity(state, 'repos', `Not cloned on this machine, so not read: ${missing.join(', ')} (locate them in Project settings)`, 'failed')
     void this.#job(state, prompt, false)
     return state.view
+  }
+
+  /**
+   * Outside agents (Settings → AI → Outside agents): each MCP request registers the plan tools against one shared run
+   * for the open project. Their changes go to a draft like any run's; each submit_proposal saves a proposal to review
+   * here and starts a fresh draft from the diagram as it is then.
+   */
+  registerExternal(server: McpServer): void {
+    const session = this.#o.projects.session
+    if (session === null) {
+      server.registerTool('get_overview', { description: 'The open Harpoon project (none is open right now).' }, () => ({
+        isError: true,
+        content: [{ type: 'text' as const, text: 'No project is open in Harpoon. Ask the user to open one, then try again.' }],
+      }))
+      return
+    }
+    let s = this.#external
+    if (s === null || s.cwd !== session.root || s.view.status === 'cancelled') s = this.#newExternal()
+    // Nothing staged yet: follow the diagram as the user edits it.
+    else if (s.draft.proposalOps().length === 0 && s.base !== session.model) {
+      s.base = session.model
+      s.draft = new Draft(session.model)
+    }
+    this.#externalLastCall = Date.now()
+    const run = s
+    const ctx = this.#toolContext(run)
+    registerTools(server, {
+      ...ctx,
+      onSubmit: (sub) => {
+        run.submitted = sub
+        run.view.title = sub.title
+        void this.#finishExternal(run)
+      },
+      onAsk: () => {
+        throw new HarpoonError('UNSUPPORTED', 'Harpoon cannot pass questions on from outside agents; ask your user directly, then continue.')
+      },
+    })
+  }
+
+  get externalLastCall(): number | null {
+    return this.#externalLastCall
+  }
+
+  #newExternal(): RunState {
+    const session = this.#o.projects.require()
+    const id = newRequestId('ext')
+    const s: RunState = {
+      view: {
+        id,
+        vendor: 'claude',
+        model: null,
+        effort: null,
+        external: true,
+        mode: 'plan',
+        status: 'running',
+        title: 'Outside agent',
+        createdAt: Date.now(),
+        turns: [],
+        activity: [],
+        usage: null,
+        proposalId: null,
+        error: null,
+        changeCount: 0,
+        phase: 'Connected over MCP',
+        questions: null,
+        solutionSetId: null,
+        decisionId: null,
+        options: [],
+        activeOption: null,
+        suggestions: null,
+        notePath: null,
+      },
+      draft: new Draft(session.model),
+      base: session.model,
+      context: {},
+      options: [],
+      active: -1,
+      solutions: null,
+      decision: null,
+      note: {},
+      selection: { nodeIds: [], connectorIds: [], focusId: null },
+      cwd: session.root,
+      repos: [],
+      route: null,
+      configFile: null,
+      handles: new Set(),
+      cancelled: false,
+      harpoonCalls: 0,
+      sessionId: undefined,
+      submitted: null,
+      proposalSeq: 0,
+      emitTimer: null,
+      draftTimer: null,
+    }
+    this.#external = s
+    this.#runs.set(id, s)
+    this.#emit(s, true)
+    return s
+  }
+
+  /** An outside agent submitted: save the proposal, then start over from the diagram as it is now. */
+  async #finishExternal(s: RunState): Promise<void> {
+    try {
+      s.view.proposalId = null
+      await this.#finish(s)
+      if (s.view.proposalId !== null) this.#activity(s, 'proposal', `Proposal ready to review: ${s.submitted?.title ?? 'changes'}`, 'ok')
+    } catch (err) {
+      this.#activity(s, 'proposal', `Could not save the proposal: ${err instanceof Error ? err.message : String(err)}`, 'failed')
+    }
+    const model = this.#o.projects.session?.model
+    if (model !== undefined) {
+      s.base = model
+      s.draft = new Draft(model)
+    }
+    s.submitted = null
+    this.#draftChanged(s)
+    this.#emit(s, true)
   }
 
   send(runId: string, prompt: string): Promise<AiRunView> {
@@ -279,111 +405,115 @@ export class AiRunner {
     }
   }
 
+  /** What the MCP tools may do for a run: read and stage into its draft, and report back to it. */
+  #toolContext(s: RunState): ToolContext {
+    const v = s.view
+    return {
+      draft: s.draft,
+      mode: v.mode,
+      ...(s.context.noteTask !== undefined ? { noteTask: s.context.noteTask } : {}),
+      options: () => ({ keys: s.options.map((o) => ({ key: o.key, title: o.title })), active: s.options[s.active]?.key ?? null }),
+      onBeginOption: (title, approach) => {
+        const key = String.fromCharCode(65 + s.options.length)
+        s.options.push({ key, title, approach, draft: new Draft(s.base) })
+        s.active = s.options.length - 1
+        this.#syncOptions(s)
+        return key
+      },
+      onSelectOption: (key) => {
+        const i = s.options.findIndex((o) => o.key === key)
+        if (i < 0) throw new HarpoonError('VALIDATION', `No option ${key}; the options are ${s.options.map((o) => o.key).join(', ') || 'none yet'}.`)
+        s.active = i
+        this.#syncOptions(s)
+        this.#draftChanged(s)
+      },
+      onSubmitSolutions: (sub) => {
+        s.solutions = sub
+        for (const o of sub.options) {
+          const opt = s.options.find((x) => x.key === o.key)
+          if (opt !== undefined && o.title !== undefined && o.title.trim() !== '') opt.title = o.title
+        }
+        v.title = sub.problem.split('\n')[0]?.slice(0, 80) ?? v.title
+        this.#syncOptions(s)
+      },
+      onSuggestRule: (rule, rationale, evidence) => {
+        const res = testRule(s.base, rule)
+        const violations = res.violations.map((x) => ({ id: x.id, name: s.base.nodes[x.id]?.name ?? x.message }))
+        const sug = v.suggestions
+        if (sug !== null) {
+          sug.rules = [...sug.rules.filter((x) => x.rule.id !== rule.id), { rule, rationale, evidence, applies: res.applies, violations }]
+          this.#emit(s, true)
+        }
+        return { applies: res.applies, violations }
+      },
+      onSuggestGuideline: (g) => {
+        if (v.suggestions === null) return
+        v.suggestions.guidelines = [...v.suggestions.guidelines.filter((x) => x.title !== g.title), g]
+        this.#emit(s, true)
+      },
+      onSubmitScan: (summary) => {
+        if (v.suggestions !== null) v.suggestions.summary = summary
+        v.title = 'Pattern scan'
+        this.#emit(s, true)
+      },
+      publishPages: async () => {
+        const root = this.#o.projects.require().root
+        const pub = await getPublish(root)
+        const decisions = await listCollection(root, 'decisions')
+        let notes: NoteDoc[] | null = null
+        if (pub.notion.includeNotes) {
+          const idx = await notesIndex(root)
+          const paths = [...(idx.project !== null ? ['project.md'] : []), ...idx.series.flatMap((x) => x.entries.map((e) => e.path))]
+          notes = (await Promise.all(paths.map((p) => readNote(root, p).catch(() => null)))).filter((d): d is NoteDoc => d !== null)
+        }
+        const model = this.#o.projects.require().model
+        const sections = notionSections({ model: pub.notion.includeNotes ? model : withoutNotes(model), decisions, notes, diagram: null, bundle: null, date: new Date().toISOString().slice(0, 10) })
+        return { targetPage: pub.notion.pageUrl, sections: sections.map((x) => ({ ...x, pageId: pub.notion.pages[x.key] ?? null })), lastPublish: pub.notion.log[0] ?? null }
+      },
+      onRecordPublish: (pages, summary) => {
+        s.published = { pages, summary }
+        v.title = 'Published to Notion'
+      },
+      onNoteSummary: (summary) => {
+        s.note = { ...s.note, summary }
+      },
+      onNoteItems: (items) => {
+        s.note = { ...s.note, items }
+      },
+      onNoteAgenda: (agenda) => {
+        s.note = { ...s.note, agenda }
+      },
+      onDraftDecision: (dd) => {
+        s.decision = dd
+        v.title = dd.title
+      },
+      runId: v.id,
+      provenance: v.mode === 'import' ? 'ai-import' : 'ai-plan',
+      selection: s.selection,
+      onChange: () => this.#draftChanged(s),
+      onHighlight: (nodeIds, note) => this.#o.bus.emit({ kind: 'ai-highlight', runId: v.id, nodeIds, note }),
+      onSubmit: (sub) => {
+        // The first submission names the proposal (later deep-dive passes only add to it).
+        if (s.submitted === null) {
+          s.submitted = sub
+          v.title = sub.title
+        } else if (sub.rationale.trim() !== '') s.submitted = { ...s.submitted, rationale: `${s.submitted.rationale}\n\n${sub.rationale}` }
+      },
+      onAsk: (questions) => {
+        v.questions = questions
+        this.#emit(s, true)
+      },
+      onActivity: (a) => {
+        s.harpoonCalls++
+        this.#activity(s, a.tool, a.summary, a.ok ? 'ok' : 'failed')
+        if (!a.ok) this.#o.log.info('tool refused', { runId: v.id, tool: a.tool, why: a.summary })
+      },
+    }
+  }
+
   async #openRoute(s: RunState): Promise<void> {
     const v = s.view
-    const route = await this.#o.mcp.open(v.id, (server) =>
-      registerTools(server, {
-        draft: s.draft,
-        mode: v.mode,
-        ...(s.context.noteTask !== undefined ? { noteTask: s.context.noteTask } : {}),
-        options: () => ({ keys: s.options.map((o) => ({ key: o.key, title: o.title })), active: s.options[s.active]?.key ?? null }),
-        onBeginOption: (title, approach) => {
-          const key = String.fromCharCode(65 + s.options.length)
-          s.options.push({ key, title, approach, draft: new Draft(s.base) })
-          s.active = s.options.length - 1
-          this.#syncOptions(s)
-          return key
-        },
-        onSelectOption: (key) => {
-          const i = s.options.findIndex((o) => o.key === key)
-          if (i < 0) throw new HarpoonError('VALIDATION', `No option ${key}; the options are ${s.options.map((o) => o.key).join(', ') || 'none yet'}.`)
-          s.active = i
-          this.#syncOptions(s)
-          this.#draftChanged(s)
-        },
-        onSubmitSolutions: (sub) => {
-          s.solutions = sub
-          for (const o of sub.options) {
-            const opt = s.options.find((x) => x.key === o.key)
-            if (opt !== undefined && o.title !== undefined && o.title.trim() !== '') opt.title = o.title
-          }
-          v.title = sub.problem.split('\n')[0]?.slice(0, 80) ?? v.title
-          this.#syncOptions(s)
-        },
-        onSuggestRule: (rule, rationale, evidence) => {
-          const res = testRule(s.base, rule)
-          const violations = res.violations.map((x) => ({ id: x.id, name: s.base.nodes[x.id]?.name ?? x.message }))
-          const sug = v.suggestions
-          if (sug !== null) {
-            sug.rules = [...sug.rules.filter((x) => x.rule.id !== rule.id), { rule, rationale, evidence, applies: res.applies, violations }]
-            this.#emit(s, true)
-          }
-          return { applies: res.applies, violations }
-        },
-        onSuggestGuideline: (g) => {
-          if (v.suggestions === null) return
-          v.suggestions.guidelines = [...v.suggestions.guidelines.filter((x) => x.title !== g.title), g]
-          this.#emit(s, true)
-        },
-        onSubmitScan: (summary) => {
-          if (v.suggestions !== null) v.suggestions.summary = summary
-          v.title = 'Pattern scan'
-          this.#emit(s, true)
-        },
-        publishPages: async () => {
-          const root = this.#o.projects.require().root
-          const pub = await getPublish(root)
-          const decisions = await listCollection(root, 'decisions')
-          let notes: NoteDoc[] | null = null
-          if (pub.notion.includeNotes) {
-            const idx = await notesIndex(root)
-            const paths = [...(idx.project !== null ? ['project.md'] : []), ...idx.series.flatMap((x) => x.entries.map((e) => e.path))]
-            notes = (await Promise.all(paths.map((p) => readNote(root, p).catch(() => null)))).filter((d): d is NoteDoc => d !== null)
-          }
-          const model = this.#o.projects.require().model
-          const sections = notionSections({ model: pub.notion.includeNotes ? model : withoutNotes(model), decisions, notes, diagram: null, bundle: null, date: new Date().toISOString().slice(0, 10) })
-          return { targetPage: pub.notion.pageUrl, sections: sections.map((x) => ({ ...x, pageId: pub.notion.pages[x.key] ?? null })), lastPublish: pub.notion.log[0] ?? null }
-        },
-        onRecordPublish: (pages, summary) => {
-          s.published = { pages, summary }
-          v.title = 'Published to Notion'
-        },
-        onNoteSummary: (summary) => {
-          s.note = { ...s.note, summary }
-        },
-        onNoteItems: (items) => {
-          s.note = { ...s.note, items }
-        },
-        onNoteAgenda: (agenda) => {
-          s.note = { ...s.note, agenda }
-        },
-        onDraftDecision: (dd) => {
-          s.decision = dd
-          v.title = dd.title
-        },
-        runId: v.id,
-        provenance: v.mode === 'import' ? 'ai-import' : 'ai-plan',
-        selection: s.selection,
-        onChange: () => this.#draftChanged(s),
-        onHighlight: (nodeIds, note) => this.#o.bus.emit({ kind: 'ai-highlight', runId: v.id, nodeIds, note }),
-        onSubmit: (sub) => {
-          // The first submission names the proposal (later deep-dive passes only add to it).
-          if (s.submitted === null) {
-            s.submitted = sub
-            v.title = sub.title
-          } else if (sub.rationale.trim() !== '') s.submitted = { ...s.submitted, rationale: `${s.submitted.rationale}\n\n${sub.rationale}` }
-        },
-        onAsk: (questions) => {
-          v.questions = questions
-          this.#emit(s, true)
-        },
-        onActivity: (a) => {
-          s.harpoonCalls++
-          this.#activity(s, a.tool, a.summary, a.ok ? 'ok' : 'failed')
-          if (!a.ok) this.#o.log.info('tool refused', { runId: v.id, tool: a.tool, why: a.summary })
-        },
-      }),
-    )
+    const route = await this.#o.mcp.open(v.id, (server) => registerTools(server, this.#toolContext(s)))
     s.route = route
     const dir = join(this.#o.runsDir, v.id)
     await mkdir(dir, { recursive: true })
@@ -407,11 +537,19 @@ export class AiRunner {
    */
   async #importJob(s: RunState, prompt: string): Promise<void> {
     const v = s.view
+    // What the user asked to bring in (or leave out) holds for every pass, deep dives included.
+    const request = v.turns.find((t) => t.role === 'user')?.text.trim() ?? ''
+    const scoped = request !== ''
+    const scopeNote = scoped
+      ? ` The user scoped this import: "${request.slice(0, 2000)}". Add only the parts of this service that fall within that scope (other responsibilities stay out); if none do, change nothing and say so.`
+      : ''
     v.phase = 'Scanning infrastructure files'
     this.#emit(s, true)
     // The project folder, unless it is one of the linked repos anyway, then every linked repo on this machine.
+    // Picked repositories leave the project folder out.
+    const picked = (s.context.repoIds?.length ?? 0) > 0
     const targets: { dir: string; repoId: string | null; name: string }[] = [
-      ...(s.repos.some((r) => resolve(r.path) === resolve(s.cwd)) ? [] : [{ dir: s.cwd, repoId: null, name: 'project folder' }]),
+      ...(picked || s.repos.some((r) => resolve(r.path) === resolve(s.cwd)) ? [] : [{ dir: s.cwd, repoId: null, name: 'project folder' }]),
       ...s.repos.map((r) => ({ dir: r.path, repoId: r.id, name: r.name })),
     ]
     const found: string[] = []
@@ -426,7 +564,7 @@ export class AiRunner {
     }
     let seedNote = 'A deterministic scan found no docker-compose, Kubernetes or package manifests.'
     if (found.length > 0) {
-      seedNote = `A deterministic scan of infrastructure files already staged these components in the draft (verify them; fix kinds, names and links; remove false ones): ${found.join(', ')}.`
+      seedNote = `A deterministic scan of infrastructure files already staged these components in the draft (verify them; fix kinds, names and links; remove false ones${scoped ? ' and any outside the requested scope' : ''}): ${found.join(', ')}.`
     }
     if (this.#stopped(s)) return
 
@@ -454,7 +592,7 @@ export class AiRunner {
           .slice(0, 5)
           .join(', ')
         await this.#runPass(s, {
-          prompt: `${firstPrompt({ mode: 'document', prompt: '', selection: { nodeIds: [n.id], connectorIds: [], focusId: null }, model: s.draft.model })}${repoBrief(s.cwd, s.repos)}\n\nDeep dive into ONE service: ${n.name} (id ${n.id})${where !== '' ? `, found in ${where}` : ''}. Read its code. Add its inner components as children (processes/modules, local database or cache, background workers, consumers), its features (routes/RPCs with endpoints and short contracts), and its outbound connections to other nodes already in the draft (with protocols). When a connection now starts or ends at one of its inner components, retarget the existing service-level connector to that component (update_connector source/target) instead of adding a duplicate. Do not restructure other services. Attach evidence. Call submit_proposal once with a one-line title for this service.`,
+          prompt: `${firstPrompt({ mode: 'document', prompt: '', selection: { nodeIds: [n.id], connectorIds: [], focusId: null }, model: s.draft.model })}${repoBrief(s.cwd, s.repos)}\n\nDeep dive into ONE service: ${n.name} (id ${n.id})${where !== '' ? `, found in ${where}` : ''}.${scopeNote} Read its code. Add its inner components as children (processes/modules, local database or cache, background workers, consumers), its features (routes/RPCs with endpoints and short contracts), and its outbound connections to other nodes already in the draft (with protocols). When a connection now starts or ends at one of its inner components, retarget the existing service-level connector to that component (update_connector source/target) instead of adding a duplicate. Do not restructure other services. Attach evidence. Call submit_proposal once with a one-line title for this service.`,
           resume: false,
           quiet: true,
           label: n.name,
@@ -486,6 +624,7 @@ export class AiRunner {
       prompt: o.prompt,
       ...(o.resume ? {} : { systemAppend: SYSTEM_BRIEF }),
       model: v.model,
+      effort: v.effort,
       mode: 'readonly',
       planNative: false,
       allowRules: [],

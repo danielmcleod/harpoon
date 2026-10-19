@@ -30,6 +30,9 @@ export const optional = <T extends z.ZodType>(t: T): z.ZodExactOptional<T> => t.
 // ---- request shapes ---------------------------------------------------------------------------------------------
 
 const VoidZ = z.undefined()
+/** A model id or alias as the CLIs take them (claude-opus-5-5, opus, gpt-6-luna, sonnet[1m]). */
+const ModelIdZ = z.string().trim().min(1).max(200).regex(/^[A-Za-z0-9._:/@[\]-]+$/, 'Not a model id')
+const EffortZ = z.string().regex(/^[a-z]{1,20}$/, 'Not an effort level')
 const EXPORT_FORMATS = ['harpoon-json', 'interchange-json', 'json-schema', 'mermaid', 'mermaid-sequence', 'plantuml', 'drawio', 'svg', 'markdown', 'brief'] as const satisfies readonly ExportFormat[]
 const ExportViewZ = z.strictObject({
   focusId: z.string().max(ID_MAX).nullable(),
@@ -57,7 +60,18 @@ export const REQUEST_SCHEMAS = {
     data: optional(z.unknown().refine((d) => JSON.stringify(d ?? null).length <= 16_000, 'log data too large')),
   }),
   'state.get': VoidZ,
-  'state.set': z.strictObject({ theme: optional(z.enum(THEMES)), nodeStyle: optional(z.enum(NODE_STYLES)), designsDir: optional(PathZ) }),
+  'state.set': z.strictObject({
+    theme: optional(z.enum(THEMES)),
+    nodeStyle: optional(z.enum(NODE_STYLES)),
+    designsDir: optional(PathZ),
+    ai: optional(
+      z.strictObject({
+        vendor: z.enum(AI_VENDORS).nullable(),
+        claude: z.strictObject({ model: ModelIdZ.nullable(), effort: EffortZ.nullable() }),
+        codex: z.strictObject({ model: ModelIdZ.nullable(), effort: EffortZ.nullable() }),
+      }),
+    ),
+  }),
   'evidence.reveal': z.strictObject({ repo: z.string().max(ID_MAX).nullable(), path: z.string().min(1).max(1000) }),
   'project.createLocal': z.strictObject({ name: z.string().min(1).max(200), template: optional(z.enum(['blank', 'sample'])) }),
   'project.importFile': z.strictObject({ path: PathZ }),
@@ -86,9 +100,12 @@ export const REQUEST_SCHEMAS = {
   'project.recent': VoidZ,
   'project.forgetRecent': z.strictObject({ path: PathZ }),
   'ai.providers': z.strictObject({ force: optional(z.boolean()) }),
+  'mcp.external.get': VoidZ,
+  'mcp.external.set': z.strictObject({ enabled: optional(z.boolean()), port: optional(z.number().int().min(1024).max(65535)), regenerate: optional(z.boolean()) }),
   'ai.start': z.strictObject({
     vendor: z.enum(AI_VENDORS),
-    model: optional(z.string().max(200).nullable()),
+    model: optional(ModelIdZ.nullable()),
+    effort: optional(EffortZ.nullable()),
     mode: z.enum(AI_MODES),
     prompt: z.string().max(PROMPT_MAX),
     selection: z.strictObject({
@@ -96,6 +113,16 @@ export const REQUEST_SCHEMAS = {
       connectorIds: z.array(z.string().max(ID_MAX)).max(2000),
       focusId: z.string().max(ID_MAX).nullable(),
     }),
+    context: optional(
+      z.strictObject({
+        solutionSetId: optional(z.string().max(ID_MAX)),
+        decisionId: optional(z.string().max(ID_MAX)),
+        source: optional(z.strictObject({ kind: z.enum(['note', 'chat', 'manual']), ref: z.string().max(1000).nullable(), label: z.string().max(500).nullable() })),
+        notePath: optional(z.string().max(1000)),
+        noteTask: optional(z.enum(['summarize', 'extract', 'agenda'])),
+        repoIds: optional(z.array(z.string().max(ID_MAX)).max(100)),
+      }),
+    ),
   }),
   'ai.send': z.strictObject({ runId: z.string().max(ID_MAX), prompt: z.string().min(1).max(PROMPT_MAX) }),
   'ai.cancel': z.strictObject({ runId: z.string().max(ID_MAX) }),

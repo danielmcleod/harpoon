@@ -3,7 +3,7 @@
 // external edits) arrives as a `model` event and is applied here. Any mismatch refetches the project.
 import { loadNotes, notesChanged } from '../notes/notesStore.ts'
 import { loadRecords } from '../records/recordsStore.ts'
-import type { AppEvent, ProjectView, ToastLevel } from '@shared/ipc.ts'
+import type { AiVendor, AppEvent, AppState, ProjectView, ToastLevel } from '@shared/ipc.ts'
 import { applyOps } from '@shared/model/ops.ts'
 import type { Op } from '@shared/model/ops.ts'
 import { call, invoke } from '../ipc/client.ts'
@@ -29,6 +29,11 @@ export function dismissToast(id: number): void {
   setState((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }))
 }
 
+/** The saved model and effort for a vendor. */
+export function pickFor(vendor: AiVendor, prefs: AppState): { vendor: AiVendor; model: string | null; effort: string | null } {
+  return { vendor, model: prefs.ai[vendor].model, effort: prefs.ai[vendor].effort }
+}
+
 // ---- boot / events ------------------------------------------------------------------------------------------
 
 export async function boot(): Promise<void> {
@@ -37,7 +42,12 @@ export async function boot(): Promise<void> {
     ready: true,
     prefs: prefs.ok ? prefs.value : s.prefs,
     project: project.ok ? project.value : null,
-    ai: { ...s.ai, runs: runs.ok ? Object.fromEntries(runs.value.map((r) => [r.id, r])) : {} },
+    ai: {
+      ...s.ai,
+      // The panel starts from this machine's defaults (Settings → AI).
+      ...(prefs.ok ? pickFor(prefs.value.ai.vendor ?? s.ai.vendor, prefs.value) : {}),
+      runs: runs.ok ? Object.fromEntries(runs.value.map((r) => [r.id, r])) : {},
+    },
   }))
   if (project.ok && project.value !== null) {
     void loadProposals()
@@ -68,7 +78,7 @@ export function handleEvents(batch: AppEvent[]): void {
         break
       case 'project-closed':
         pending.clear()
-        setState((s) => ({ project: null, ui: INITIAL_UI, ai: { ...INITIAL_AI, providers: s.ai.providers, vendor: s.ai.vendor, model: s.ai.model } }))
+        setState((s) => ({ project: null, ui: INITIAL_UI, ai: { ...INITIAL_AI, providers: s.ai.providers, vendor: s.ai.vendor, model: s.ai.model, effort: s.ai.effort } }))
         break
       case 'model':
         onModel(e)

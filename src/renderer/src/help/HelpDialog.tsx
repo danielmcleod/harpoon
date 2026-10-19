@@ -146,6 +146,14 @@ function Page({ topic }: { topic: HelpTopic }): React.JSX.Element {
           />
           <P>The CLI runs read-only in the project folder: it can read the code but never edits files. It changes the diagram only through Harpoon&apos;s own tools, into a draft you accept or discard. Select nodes first to narrow what it looks at.</P>
           <P>Install and sign in to <B>Claude Code</B> (<code>claude</code>) or <B>Codex</B> (<code>codex</code>) first. The assistant shows which ones it found.</P>
+          <P>
+            Pick the model and effort at the top of the panel. Settings → <B>AI</B> keeps the defaults for this computer, checks your CLIs again (update a CLI to see newer
+            models, or type any model id), and can let an agent you run yourself use Harpoon&apos;s tools through MCP.
+          </P>
+          <P>
+            <B>Import repo</B> with several linked repositories: untick the ones to skip and describe what to bring in, for example &quot;only checkout and payments; from
+            the gateway just the public routes&quot;. Services that do more than that come in with only the parts in scope.
+          </P>
         </>
       )
     case 'rules':

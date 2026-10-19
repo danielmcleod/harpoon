@@ -1,7 +1,7 @@
 // AI actions: providers, conversations, proposals and the Diff & Merge review.
 import type { AiContext, AiMode, AiVendor } from '@shared/ipc.ts'
 import { invoke } from '../ipc/client.ts'
-import { toast } from './actions.ts'
+import { pickFor, toast } from './actions.ts'
 import { getState, setAi, setUi } from './store.ts'
 
 export async function loadProviders(force = false): Promise<void> {
@@ -11,12 +11,14 @@ export async function loadProviders(force = false): Promise<void> {
     const providers = r.value
     // Keep the user's pick when it works; otherwise the first provider that does.
     const usable = providers.find((p) => p.id === ai.vendor && p.ok) ?? providers.find((p) => p.ok)
-    return { providers, vendor: usable?.id ?? ai.vendor }
+    const vendor = usable?.id ?? ai.vendor
+    return vendor === ai.vendor ? { providers } : { providers, ...pickFor(vendor, getState().prefs) }
   })
 }
 
+/** Switch the panel's CLI; its model and effort go back to that CLI's saved defaults. */
 export function setVendor(vendor: AiVendor): void {
-  setAi({ vendor, model: null })
+  setAi(pickFor(vendor, getState().prefs))
 }
 
 export function setAiMode(mode: AiMode): void {
@@ -41,7 +43,11 @@ export async function ask(prompt: string, o: { fresh?: boolean; mode?: AiMode; c
     if (!r.ok) toast(r.error.message, 'error')
     return
   }
-  const r = await invoke('ai.start', { vendor: ai.vendor, model: ai.model, mode: o.mode ?? ai.mode, prompt, selection: selection(), ...(o.context !== undefined ? { context: o.context } : {}) })
+  const mode = o.mode ?? ai.mode
+  // Import: the repositories picked in the panel (none picked means all of them).
+  const repoIds = mode === 'import' && ai.importRepos !== null && ai.importRepos.length > 0 ? ai.importRepos : undefined
+  const context: AiContext | undefined = repoIds !== undefined ? { ...o.context, repoIds } : o.context
+  const r = await invoke('ai.start', { vendor: ai.vendor, model: ai.model, effort: ai.effort, mode, prompt, selection: selection(), ...(context !== undefined ? { context } : {}) })
   if (!r.ok) return toast(r.error.message, 'error')
   setAi((s) => ({ activeRunId: r.value.id, runs: { ...s.runs, [r.value.id]: r.value }, review: { kind: 'draft', runId: r.value.id }, excluded: {} }))
   setUi({ aiOpen: true })

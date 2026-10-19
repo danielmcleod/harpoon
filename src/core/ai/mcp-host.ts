@@ -1,5 +1,7 @@
 // Harpoon's MCP endpoint for the CLI agents: one loopback HTTP server (Streamable HTTP, stateless, JSON responses),
 // one route per AI run (`/mcp/<runId>`) with its own random bearer token. A route exists only while its run does.
+// Outside agents get a second host on a fixed port (so their saved configuration keeps working) with one route,
+// `/mcp/harpoon`, and a token the user can replace.
 // Requests must come from loopback with the exact Host, carry the run's token, and never come from a browser (an
 // Origin header is refused, which also stops DNS-rebinding pages).
 import { randomBytes, timingSafeEqual } from 'node:crypto'
@@ -31,9 +33,21 @@ export class McpHost {
   #port = 0
   readonly #routes = new Map<string, RouteEntry>()
   readonly #log: Logger
+  readonly #fixedPort: number
 
-  constructor(log: Logger) {
+  /** `port`: listen there (outside agents); absent: any free port. */
+  constructor(log: Logger, o: { port?: number } = {}) {
     this.#log = log
+    this.#fixedPort = o.port ?? 0
+  }
+
+  get port(): number {
+    return this.#port
+  }
+
+  /** Start listening now (outside agents: to report a taken port at once rather than on the first call). */
+  async listen(): Promise<void> {
+    await this.#ensure()
   }
 
   async #ensure(): Promise<void> {
@@ -44,7 +58,7 @@ export class McpHost {
     server.requestTimeout = 60_000
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
-      server.listen(0, '127.0.0.1', () => resolve())
+      server.listen(this.#fixedPort, '127.0.0.1', () => resolve())
     })
     this.#port = (server.address() as AddressInfo).port
     this.#server = server
@@ -52,9 +66,9 @@ export class McpHost {
   }
 
   /** Open a route for a run; `register` adds the run's tools to a fresh MCP server per request. */
-  async open(runId: string, register: (s: McpServer) => void, onCall?: () => void): Promise<McpRoute> {
+  async open(runId: string, register: (s: McpServer) => void, onCall?: () => void, fixedToken?: string): Promise<McpRoute> {
     await this.#ensure()
-    const token = randomBytes(32).toString('base64url')
+    const token = fixedToken ?? randomBytes(32).toString('base64url')
     this.#routes.set(runId, { token: Buffer.from(token), register, ...(onCall !== undefined ? { onCall } : {}) })
     return {
       url: `http://127.0.0.1:${this.#port}/mcp/${encodeURIComponent(runId)}`,

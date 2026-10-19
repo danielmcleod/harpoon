@@ -15,12 +15,18 @@ import { Markdown } from './Markdown.tsx'
 import { ProposalCard } from './ProposalCard.tsx'
 import { QuestionCard } from './QuestionCard.tsx'
 import { AI_NOTE_SHORT, AiNote } from './AiNote.tsx'
+import { ModelPicker } from './ModelPicker.tsx'
+import { useModel } from '../canvas/useScene.ts'
 
 export const MODE_INFO: Record<AiMode, { label: string; hint: string; placeholder: string }> = {
   plan: { label: 'Plan a change', hint: 'Design additions; they land as planned nodes for review.', placeholder: 'e.g. Add an async fraud scorer that consumes orders via Kafka and alerts PagerDuty on high risk' },
   document: { label: 'Document', hint: 'Fill in descriptions, features and contracts from the code.', placeholder: 'e.g. Document the payment services (leave empty for the selection)' },
   explain: { label: 'Explain', hint: 'Ask about the architecture; it highlights what it talks about.', placeholder: 'e.g. What breaks if Redis goes down?' },
-  import: { label: 'Import repo', hint: 'Map the code in this folder into services, data stores and connectors.', placeholder: 'Optional focus, e.g. only the backend services' },
+  import: {
+    label: 'Import repo',
+    hint: 'Map the code into services, data stores and connectors. Pick the repositories and say what to bring in; anything else stays out.',
+    placeholder: 'Optional scope, e.g. only checkout and payments; from the API gateway just the public routes, not the admin tools',
+  },
   drift: { label: 'Drift check', hint: 'Compare the diagram with the code and propose corrections.', placeholder: 'Optional focus' },
   solutions: {
     label: 'Propose solutions',
@@ -44,6 +50,8 @@ export function AiPanel(): React.JSX.Element {
   const providers = useStore((s) => s.ai.providers)
   const vendor = useStore((s) => s.ai.vendor)
   const model = useStore((s) => s.ai.model)
+  const effort = useStore((s) => s.ai.effort)
+  const repos = useModel().meta.repos
   const mode = useStore((s) => s.ai.mode)
   const runs = useStore((s) => s.ai.runs)
   const activeId = useStore((s) => s.ai.activeRunId)
@@ -86,24 +94,6 @@ export function AiPanel(): React.JSX.Element {
       <div className="flex h-11 shrink-0 items-center gap-1.5 border-b px-3">
         <Bot className="size-4 text-hx-violet" />
         <span className="text-sm font-semibold">AI</span>
-        <div className="ml-2 flex items-center gap-1">
-          <select aria-label="Provider" title={AI_NOTE_SHORT} value={vendor} onChange={(e) => setVendor(e.target.value as 'claude' | 'codex')} className="h-7 rounded-md border bg-background px-1.5 text-xs">
-            {(providers ?? [{ id: 'claude', name: 'Claude Code', ok: true }, { id: 'codex', name: 'Codex', ok: true }]).map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-                {p.ok ? '' : ' (unavailable)'}
-              </option>
-            ))}
-          </select>
-          <select aria-label="Model" value={model ?? ''} onChange={(e) => setAi({ model: e.target.value === '' ? null : e.target.value })} className="h-7 max-w-36 rounded-md border bg-background px-1.5 text-xs">
-            <option value="">Default model</option>
-            {(provider?.models ?? []).map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-        </div>
         <div className="ml-auto flex items-center">
           <Button variant="ghost" size="icon" className="size-7" aria-label="Conversations" title="Conversations" onClick={() => setShowHistory((x) => !x)}>
             <History />
@@ -115,6 +105,18 @@ export function AiPanel(): React.JSX.Element {
             <X />
           </Button>
         </div>
+      </div>
+
+      <div className="flex shrink-0 flex-wrap items-center gap-1 border-b px-3 py-1.5">
+        <select aria-label="Provider" title={AI_NOTE_SHORT} value={vendor} onChange={(e) => setVendor(e.target.value as 'claude' | 'codex')} className="h-7 rounded-md border bg-background px-1.5 text-xs">
+          {(providers ?? [{ id: 'claude', name: 'Claude Code', ok: true }, { id: 'codex', name: 'Codex', ok: true }]).map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+              {p.ok ? '' : ' (unavailable)'}
+            </option>
+          ))}
+        </select>
+        <ModelPicker provider={provider} value={{ model, effort }} onChange={(v) => setAi(v)} />
       </div>
 
       {provider !== undefined && !provider.ok && (
@@ -180,6 +182,7 @@ export function AiPanel(): React.JSX.Element {
             </button>
           ))}
         </div>
+        {mode === 'import' && repos.length > 1 && <ImportRepos repos={repos} />}
         <div className="rounded-lg border bg-background focus-within:border-ring">
           <textarea
             aria-label="Message to the AI"
@@ -460,6 +463,34 @@ function ScanCard({ run, busy }: { run: AiRunView; busy: boolean }): React.JSX.E
           </ul>
         </div>
       )}
+    </div>
+  )
+}
+
+/** Import: which linked repositories to read (none picked: all of them). */
+function ImportRepos({ repos }: { repos: readonly { id: string; name: string }[] }): React.JSX.Element {
+  const picked = useStore((s) => s.ai.importRepos)
+  const on = (id: string): boolean => picked === null || picked.length === 0 || picked.includes(id)
+  const toggle = (id: string): void => {
+    const cur = repos.filter((r) => on(r.id)).map((r) => r.id)
+    const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]
+    // Back to "all" when every one is on; never none.
+    setAi({ importRepos: next.length === 0 || next.length === repos.length ? null : next })
+  }
+  return (
+    <div className="mb-1.5 flex flex-wrap items-center gap-1 text-[11px]" role="group" aria-label="Repositories to import">
+      <span className="text-muted-foreground">Repositories:</span>
+      {repos.map((r) => (
+        <button
+          key={r.id}
+          type="button"
+          aria-pressed={on(r.id)}
+          onClick={() => toggle(r.id)}
+          className={cn('rounded-md border px-1.5 py-0.5', on(r.id) ? 'border-primary/60 bg-primary/10 text-foreground' : 'text-muted-foreground line-through')}
+        >
+          {r.name}
+        </button>
+      ))}
     </div>
   )
 }
