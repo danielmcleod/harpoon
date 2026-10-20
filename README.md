@@ -3,6 +3,8 @@
 Interactive hexagonal architecture diagrams for documenting, planning and presenting software systems, with Claude
 Code and Codex built in.
 
+![Harpoon: a commerce platform mapped as hexagonal services, with the architecture tree, palette and resilience review](docs/screenshots/overview.webp)
+
 - **Map** services as hexagons on a 60° grid, joined by straight *harpoon* connectors: two anti-parallel lines, each
   with a single barb, for request and response (`⇌`), and protocol badges.
 - **Drill down**: double-click a service to expand its inner architecture in place, or open it full-canvas, with
@@ -33,6 +35,21 @@ Code and Codex built in.
 - **Projects across repositories**: link several repos (discovered from a folder); AI runs read them all.
 - **Notion**: a Notion-ready import zip, AI publishing through your own Notion MCP server, and the share bundle
   attached through Notion's API.
+
+## Screenshots
+
+| | |
+|---|---|
+| ![A service expanded in place, its inner parts and connectors visible, with the inspector open](docs/screenshots/drill-down.webp) | ![The traffic simulator listing where traffic stops: a dead end at an on-prem ERP and a load balancer link pointing the wrong way](docs/screenshots/where-traffic-stops.webp) |
+| **Drill down**: expand a service in place to see its inner parts. | **Where traffic stops**: the simulator finds dead ends and links drawn the wrong way, and the AI can investigate them. |
+| ![The traffic simulator with an outside payment provider down, failures cascading in red](docs/screenshots/traffic-simulator.webp) | ![The resilience lens colouring nodes by availability, with single points of failure marked](docs/screenshots/resilience-lens.webp) |
+| **Traffic simulator**: inject faults and watch latency and errors cascade. | **Resilience lens**: how much failure each part survives; single points of failure marked. |
+| ![Impact analysis of a zone outage: what goes down and what degrades](docs/screenshots/zone-outage-impact.webp) | ![Three AI-designed fraud scoring options compared side by side with diagrams, pros, cons and scores](docs/screenshots/compare-solutions.webp) |
+| **Failure impact**: what one instance, a zone or the whole node failing takes down. | **Propose solutions**: alternative designs side by side, scored, ending in a decision record. |
+| ![A meeting note with mentions beside the live diagram](docs/screenshots/meeting-notes.webp) | ![The diagram as it will be at the end of a roadmap phase, with planned work](docs/screenshots/roadmap-phase.webp) |
+| **Meeting notes** beside the live diagram; mentions are marked on it. | **Roadmap**: the architecture at the end of each phase. |
+| ![The AI assistant panel with model and effort pickers and its modes](docs/screenshots/ai-assistant.webp) | |
+| **AI assistant** through your own Claude Code or Codex CLI, with model and effort choice. | |
 
 ## Develop
 
