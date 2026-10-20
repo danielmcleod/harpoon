@@ -1,5 +1,5 @@
 // Several nodes selected: group them into a new container, put them in a boundary, change status, delete.
-import { Boxes, Shapes, Trash2 } from 'lucide-react'
+import { Boxes, Shapes, Trash2, Sparkles } from 'lucide-react'
 import { coordKey, nearestFreeCell } from '@shared/geometry/hex.ts'
 import { uniqueId } from '@shared/model/ids.ts'
 import type { Op } from '@shared/model/ops.ts'
@@ -10,6 +10,8 @@ import { edit, select, toggleExpanded } from '../../state/actions.ts'
 import { useModel } from '../../canvas/useScene.ts'
 import { deleteSelection } from '../selectionOps.ts'
 import { STATUS_LABEL } from './NodeInspector.tsx'
+import { problemsAbout, resolveWithAi } from '../../ai/resolve.ts'
+import { AI_NOTE_SHORT } from '../../ai/AiNote.tsx'
 
 export function MultiInspector({ ids, readOnly }: { ids: string[]; readOnly: boolean }): React.JSX.Element {
   const model = useModel()
@@ -48,6 +50,8 @@ export function MultiInspector({ ids, readOnly }: { ids: string[]; readOnly: boo
   const setStatus = (status: Status): void => {
     edit(nodes.map((n) => ({ op: 'updateNode' as const, id: n.id, patch: { status } })), { label: 'set status' })
   }
+  const about = problemsAbout(model, ids)
+  const count = about.problems.length + about.findings.length
 
   return (
     <div className="p-3">
@@ -55,6 +59,11 @@ export function MultiInspector({ ids, readOnly }: { ids: string[]; readOnly: boo
       <p className="mt-0.5 mb-3 text-xs text-muted-foreground">{nodes.map((n) => n.name).join(', ')}</p>
       {!readOnly && (
         <div className="flex flex-col gap-2">
+          {count > 0 && (
+            <Button size="sm" variant="outline" icon={<Sparkles />} onClick={() => resolveWithAi(about.problems, about.findings, `${nodes.length} selected nodes`)} title={AI_NOTE_SHORT}>
+              Resolve their problems with AI ({count})
+            </Button>
+          )}
           <Button size="sm" variant="outline" icon={<Boxes />} disabled={!sameLevel} title={sameLevel ? undefined : 'Pick nodes on the same level'} onClick={group}>
             Group into a new container
           </Button>

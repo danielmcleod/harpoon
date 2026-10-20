@@ -164,6 +164,7 @@ function Page({ topic }: { topic: HelpTopic }): React.JSX.Element {
         <List
           items={[
             <><B>Problems</B> checks the diagram as you work: unconnected nodes, connectors without a protocol, outside links without auth, data handled outside its approved boundary, planned work ordered before what it depends on, and more.</>,
+            <>To fix problems: hover one for its fix (the wrench needs no AI, for things like a deleted team or phase; the sparkles ask the AI), tick several and <B>Resolve selected</B>, or <B>Resolve all with AI</B>. Right-click a node (or several selected) for <B>Resolve problems with AI</B>; the Problems table resolves what it shows. The AI checks the code before changing anything and says which problems it fixed or left, and why.</>,
             <>Project settings → <B>Rules &amp; guidelines</B> adds your own checks (for example, which services may call which) and written guidelines the AI follows.</>,
           ]}
         />

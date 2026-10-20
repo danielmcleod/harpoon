@@ -48,6 +48,11 @@ export const MODE_INFO: Record<AiMode, { label: string; hint: string; placeholde
     hint: 'Find single points of failure and missing failover, check the real deployment in the code, and propose fixes.',
     placeholder: 'Optional focus, e.g. the payment path; plan fixes for phase 2',
   },
+  resolve: {
+    label: 'Resolve problems',
+    hint: 'Fix the problems Harpoon reports, after checking the code; each one is fixed or left with a reason.',
+    placeholder: 'Optional: which problems, e.g. the missing auth on outside links',
+  },
   decision: { label: 'Decision record', hint: 'Write up a decision (started from a decision record).', placeholder: 'What should the record say?' },
   notes: { label: 'Notes', hint: 'Summaries, items and agendas (started from a note).', placeholder: 'What should it do with the note?' },
   publish: { label: 'Publish to Notion', hint: 'Write the architecture, roadmap and decisions to your Notion page (set it up in Project settings → Notion).', placeholder: 'Anything to add to the changelog?' },
@@ -59,7 +64,7 @@ export const MODE_INFO: Record<AiMode, { label: string; hint: string; placeholde
 }
 
 /** Modes offered as chips (a decision record is started from the record itself). */
-const CHIP_MODES: AiMode[] = ['plan', 'solutions', 'document', 'explain', 'import', 'drift', 'flows', 'resilience', 'scan']
+const CHIP_MODES: AiMode[] = ['plan', 'solutions', 'document', 'explain', 'import', 'drift', 'resolve', 'flows', 'resilience', 'scan']
 
 export function AiPanel(): React.JSX.Element {
   const providers = useStore((s) => s.ai.providers)

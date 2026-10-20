@@ -9,7 +9,7 @@ import { KIND_INFO, PROTOCOLS } from '../../shared/model/kinds.ts'
 import { lintModel } from '../../shared/model/lint.ts'
 import { removeNodeOps } from '../../shared/model/ops.ts'
 import type { Op } from '../../shared/model/ops.ts'
-import { ancestorsOf, childrenOf, pathLabel } from '../../shared/model/queries.ts'
+import { ancestorsOf, childrenOf, descendantIds, pathLabel } from '../../shared/model/queries.ts'
 import {
   BOUNDARY_TYPES,
   BoundaryZ,
@@ -944,13 +944,44 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
         const before = new Set(lintModel(d.base).map((p) => `${p.code}|${p.nodeId ?? ''}|${p.connectorId ?? ''}`))
         const now = lintModel(d.model)
         const haBefore = new Set(resilienceFindings(d.base).map((f) => `${f.kind}|${f.nodeId ?? ''}|${f.connectorId ?? ''}`))
+        const nowKeys = new Set(now.map((p) => `${p.code}|${p.nodeId ?? ''}|${p.connectorId ?? ''}`))
         return ok({
           introducedByDraft: now.filter((p) => !before.has(`${p.code}|${p.nodeId ?? ''}|${p.connectorId ?? ''}`)),
+          // Problems the diagram had that the draft clears.
+          resolved: lintModel(d.base)
+            .filter((p) => !nowKeys.has(`${p.code}|${p.nodeId ?? ''}|${p.connectorId ?? ''}`))
+            .map((p) => ({ code: p.code, message: p.message })),
           preExisting: now.length,
           // Availability gaps on the request path (single points of failure, one-zone services, unprotected outside calls).
           resilience: resilienceFindings(d.model)
             .filter((f) => f.severity !== 'info')
             .map((f) => ({ kind: f.kind, node: f.nodeId, connector: f.connectorId, message: f.message, fix: f.fix, new: !haBefore.has(`${f.kind}|${f.nodeId ?? ''}|${f.connectorId ?? ''}`) })),
+        })
+      }),
+  )
+
+  server.registerTool(
+    'list_problems',
+    {
+      description:
+        'Every problem Harpoon reports for the draft: missing protocols or auth, unconnected nodes, call cycles, data outside its approved zone, roadmap order, broken flows, where traffic stops, the project’s own rules, and availability gaps (single points of failure). Each with its code, severity and the node, connector, boundary or flow it is about.',
+      inputSchema: { nodeIds: z.array(z.string()).max(200).optional().describe('Only problems about these nodes (and their inner parts and connectors)') },
+      annotations: ro,
+    },
+    (a) =>
+      guard(() => {
+        const m = d.model
+        let problems = lintModel(m)
+        let ha = resilienceFindings(m).filter((f) => f.severity !== 'info')
+        if (a.nodeIds !== undefined && a.nodeIds.length > 0) {
+          const ids = new Set(a.nodeIds.flatMap((id) => [id, ...descendantIds(m, id)]))
+          const touches = (c: string | undefined): boolean => c !== undefined && (ids.has(m.connectors[c]?.source ?? '') || ids.has(m.connectors[c]?.target ?? ''))
+          problems = problems.filter((p) => (p.nodeId !== undefined && ids.has(p.nodeId)) || touches(p.connectorId))
+          ha = ha.filter((f) => (f.nodeId !== null && ids.has(f.nodeId)) || touches(f.connectorId ?? undefined))
+        }
+        return ok({
+          problems: problems.map((p) => ({ code: p.code, severity: p.severity, message: p.message, node: p.nodeId ?? null, connector: p.connectorId ?? null, boundary: p.boundaryId ?? null, flow: p.flowId ?? null })),
+          availability: ha.map((f) => ({ kind: f.kind, severity: f.severity, message: f.message, fix: f.fix, node: f.nodeId, connector: f.connectorId })),
         })
       }),
   )

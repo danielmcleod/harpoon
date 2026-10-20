@@ -25,6 +25,7 @@ import { EvidenceList } from './EvidenceList.tsx'
 import { Chip, NumberInput, Row, Section, Select, TextArea, TextInput, orNull } from './fields.tsx'
 import { DataClassPicker, NotesEditor, PhasePicker, TeamPicker, useDataScope } from './governance.tsx'
 import { ResilienceSection } from './ResilienceSection.tsx'
+import { NodeProblems } from '../Problems.tsx'
 
 export const STATUS_LABEL: Record<HxNode['status'], string> = {
   existing: 'Existing',
@@ -253,6 +254,8 @@ export function NodeInspector({ node: n, readOnly }: { node: HxNode; readOnly: b
           <EvidenceList evidence={n.evidence} provenance={n.provenance} confidence={n.confidence} />
         </Section>
       )}
+
+      <NodeProblems nodeId={n.id} name={n.name} editable={!readOnly} />
 
       <ResilienceSection node={n} readOnly={readOnly} />
 

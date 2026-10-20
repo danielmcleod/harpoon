@@ -1,5 +1,5 @@
 // Right-click menu for a node: expand/collapse, open inside, blast radius, status, duplicate, delete.
-import { Cable, Copy, Crosshair, Maximize2, Minimize2, PanelTopOpen, Route, Sparkles, Trash2 } from 'lucide-react'
+import { Cable, Copy, Crosshair, Maximize2, Minimize2, PanelTopOpen, Route, Sparkles, Trash2, Wrench } from 'lucide-react'
 import { useEffect } from 'react'
 import { uniqueId } from '@shared/model/ids.ts'
 import { coordKey, nearestFreeCell } from '@shared/geometry/hex.ts'
@@ -10,6 +10,7 @@ import { deleteSelection } from '../panels/selectionOps.ts'
 import { edit, focus, select, startConnect, toggleExpanded } from '../state/actions.ts'
 import { getState, setUi } from '../state/store.ts'
 import { investigateTraffic } from '../sim/investigate.ts'
+import { problemsAbout, resolveWithAi } from '../ai/resolve.ts'
 
 export interface MenuState {
   x: number
@@ -40,6 +41,11 @@ export function NodeMenu({ menu, onClose }: { menu: MenuState; onClose: () => vo
   const editable = s.ui.mode === 'edit'
   const expanded = s.ui.expanded[n.id] === true
   const hasKids = Object.values(m.nodes).some((x) => x.parentId === n.id)
+  // Right-clicking one of several selected nodes resolves for the whole selection.
+  const sel = s.ui.selection
+  const targets = sel?.kind === 'node' && sel.ids.length > 1 && sel.ids.includes(n.id) ? sel.ids : [n.id]
+  const about = problemsAbout(m, targets)
+  const problemCount = about.problems.length + about.findings.length
 
   const run = (fn: () => void) => (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -90,6 +96,13 @@ export function NodeMenu({ menu, onClose }: { menu: MenuState; onClose: () => vo
           select({ kind: 'node', ids: [n.id] })
           setUi({ aiOpen: true })
         })} />
+      )}
+      {editable && problemCount > 0 && (
+        <Item
+          icon={<Wrench />}
+          label={`Resolve problems with AI (${problemCount}${targets.length > 1 ? `, ${targets.length} nodes` : ''})`}
+          onClick={run(() => resolveWithAi(about.problems, about.findings, targets.length > 1 ? `${targets.length} selected nodes` : `${n.name} (and its inner parts)`))}
+        />
       )}
       {editable && <Item icon={<Route />} label="Investigate traffic with AI" onClick={run(() => investigateTraffic(n.id))} />}
       {editable && (

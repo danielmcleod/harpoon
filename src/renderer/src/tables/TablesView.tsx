@@ -3,13 +3,16 @@
 // as a named table view, export CSV or Markdown, and jump to any row on the canvas.
 import type { Table } from '@tanstack/react-table'
 import { DropdownMenu } from 'radix-ui'
-import { Bookmark, Columns3, Download, Search, Trash2, X } from 'lucide-react'
+import { Bookmark, Columns3, Download, Search, Sparkles, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { SavedTable, TableTab } from '@shared/ipc.ts'
 import { TABLE_TABS } from '@shared/ipc.ts'
 import { dataClassCatalog, phasesInOrder } from '@shared/model/governance.ts'
 import { uniqueId } from '@shared/model/ids.ts'
 import { lintModel } from '@shared/model/lint.ts'
+import type { Problem } from '@shared/model/lint.ts'
+import { resolveWithAi } from '../ai/resolve.ts'
+import { AI_NOTE_SHORT } from '../ai/AiNote.tsx'
 import type { Op } from '@shared/model/ops.ts'
 import { STATUSES } from '@shared/model/schema.ts'
 import type { Status } from '@shared/model/schema.ts'
@@ -236,8 +239,15 @@ function Toolbar({ tab, table }: { tab: TableTab; table: Table<{ id: string }> |
 
   const menu = 'z-50 min-w-48 rounded-lg border bg-popover p-1 text-xs shadow-lg'
   const item = 'flex cursor-default items-center gap-2 rounded px-2 py-1.5 outline-none data-[highlighted]:bg-accent'
+  // Problems: hand what the table shows (after search and filters) to the AI.
+  const shownProblems = tab === 'problems' && table !== null ? table.getFilteredRowModel().flatRows.map((r) => (r.original as { problem?: Problem }).problem).filter((p): p is Problem => p !== undefined) : []
   return (
     <div className="flex items-center gap-1.5">
+      {tab === 'problems' && editable && shownProblems.length > 0 && (
+        <Button size="sm" variant="outline" icon={<Sparkles />} onClick={() => resolveWithAi(shownProblems)} title={`The AI checks the code for each problem shown, then proposes fixes. ${AI_NOTE_SHORT}`}>
+          Resolve shown with AI ({shownProblems.length})
+        </Button>
+      )}
       <label className="relative flex items-center">
         <Search className="pointer-events-none absolute left-2 size-3.5 text-muted-foreground" />
         <input

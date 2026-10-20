@@ -1,7 +1,10 @@
 // Column definitions for every table. Editable cells commit the same ops as the inspector (so undo works); in Docs
 // mode, or for derived values, they render as text.
 import type { CellContext, ColumnDef, Row } from '@tanstack/react-table'
-import { ChevronRight, LocateFixed, StickyNote } from 'lucide-react'
+import { ChevronRight, LocateFixed, Sparkles, StickyNote, Wrench } from 'lucide-react'
+import type { Problem } from '@shared/model/lint.ts'
+import { quickFix } from '@shared/model/quickfix.ts'
+import { resolveWithAi } from '../ai/resolve.ts'
 import { useEffect, useState } from 'react'
 import { KIND_INFO } from '@shared/model/kinds.ts'
 import type { Op } from '@shared/model/ops.ts'
@@ -405,9 +408,40 @@ export function problemColumns(c: ColumnCtx): ColumnDef<ProblemRow & { entityNam
     { id: 'entityName', accessorKey: 'entityName', header: 'Where', meta: { width: 220 } },
     { id: 'message', accessorKey: 'message', header: 'Problem', meta: { width: 520 } },
     { id: 'code', accessorKey: 'code', header: 'Check', meta: { width: 150 } },
+    ...(c.editable
+      ? [
+          {
+            id: 'fix',
+            header: '',
+            cell: ({ row }: CellContext<ProblemRow & { entityName: string }, unknown>) => <FixCell model={c.model} problem={row.original.problem} />,
+            enableSorting: false,
+            enableColumnFilter: false,
+            enableGrouping: false,
+            enableHiding: false,
+            meta: { width: 64 },
+          },
+        ]
+      : []),
     showColumn<ProblemRow & { entityName: string }>((r) => {
       if (r.entity === 'node' && r.entityId !== null) c.showOnCanvas('node', r.entityId)
       if (r.entity === 'connector' && r.entityId !== null) c.showOnCanvas('connector', r.entityId)
     }),
   ]
+}
+
+/** A problem's one-click fix (when it needs no judgement) and its AI fix. */
+function FixCell({ model, problem }: { model: Model; problem: Problem }): React.JSX.Element {
+  const fix = quickFix(model, problem)
+  return (
+    <span className="flex items-center gap-0.5">
+      {fix !== null && (
+        <button type="button" title={`${fix.label} (no AI)`} aria-label={fix.label} onClick={(e) => (e.stopPropagation(), commit(fix.ops, fix.label.toLowerCase()))} className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground">
+          <Wrench className="size-3.5" />
+        </button>
+      )}
+      <button type="button" title="Resolve with AI" aria-label={`Resolve with AI: ${problem.message}`} onClick={(e) => (e.stopPropagation(), resolveWithAi([problem]))} className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-primary">
+        <Sparkles className="size-3.5" />
+      </button>
+    </span>
+  )
 }

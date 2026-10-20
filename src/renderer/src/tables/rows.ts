@@ -289,6 +289,8 @@ export interface ProblemRow {
   message: string
   entity: 'node' | 'connector' | 'boundary' | 'flow' | 'project'
   entityId: string | null
+  /** The problem itself (for its fix and the AI). */
+  problem: Problem
 }
 
 export function problemRows(problems: readonly Problem[]): ProblemRow[] {
@@ -299,6 +301,7 @@ export function problemRows(problems: readonly Problem[]): ProblemRow[] {
     message: p.message,
     entity: p.nodeId !== undefined ? 'node' : p.connectorId !== undefined ? 'connector' : p.boundaryId !== undefined ? 'boundary' : p.flowId !== undefined ? 'flow' : 'project',
     entityId: p.nodeId ?? p.connectorId ?? p.boundaryId ?? p.flowId ?? null,
+    problem: p,
   }))
 }
 

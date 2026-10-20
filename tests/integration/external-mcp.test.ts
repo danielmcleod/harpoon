@@ -57,6 +57,8 @@ it('lets an agent with the token read the project and propose a change', async (
   client = await connect(url, token)
   const overview = await client.callTool({ name: 'get_overview', arguments: {} })
   expect(JSON.stringify(overview.content)).toContain('auth-service')
+  const listed = await client.callTool({ name: 'list_problems', arguments: {} })
+  expect(JSON.stringify(listed.content)).toContain('availability')
   const traffic = await client.callTool({ name: 'check_traffic', arguments: {} })
   expect(JSON.stringify(traffic.content)).toContain('reached')
   const added = await client.callTool({ name: 'add_node', arguments: { name: 'Fraud scorer', kind: 'service' } })
