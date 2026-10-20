@@ -1,5 +1,6 @@
 // Electron main entry. Before ready: app:// scheme → home → userData under HARPOON_HOME → AUMID → single-instance
 // lock → createCore. On ready: hardening, renderer files, menu, theme, push, IPC router, window.
+import { createReadStream } from 'node:fs'
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { confined } from '@core/project/confine.ts'
 import { listCollection } from '@core/project/collections.ts'
@@ -13,6 +14,7 @@ import { app, dialog, nativeTheme, protocol, shell } from 'electron'
 import { attachBundle, canEncrypt, notionExport, notionToken, setNotionToken } from './notion.ts'
 import type { BrowserWindow, OpenDialogOptions, SaveDialogOptions, SaveDialogReturnValue } from 'electron'
 import { createCore } from '@core/app-core.ts'
+import { runMcpBridge } from '@core/ai/mcp-bridge.ts'
 import { withoutNotes } from '@shared/model/governance.ts'
 import type { Core } from '@core/app-core.ts'
 import { HarpoonError, errorMessage } from '@core/errors.ts'
@@ -36,9 +38,23 @@ import type { RendererTarget } from './urls.ts'
 import { createMainWindow, revealWindow } from './window.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
+
+/** Outside agents' stdio bridge: this executable with --mcp (in development, Electron plus the app folder). */
+function bridgeCommand(): { command: string; args: string[] } {
+  return { command: process.execPath, args: app.isPackaged ? ['--mcp'] : [app.getAppPath(), '--mcp'] }
+}
 let mainWindow: BrowserWindow | null = null
 
 async function boot(): Promise<void> {
+  // `Harpoon --mcp`: a stdio MCP bridge for outside agents, with no window and no single-instance lock (the app the
+  // bridge talks to is the running one).
+  if (process.argv.includes('--mcp')) {
+    // Electron's process.stdin delivers nothing from a pipe on Windows; the inherited handle (fd 0) does.
+    const input = createReadStream('', { fd: 0, autoClose: false })
+    const code = await runMcpBridge({ stateFile: homePaths(resolveHome()).state, input, output: process.stdout })
+    app.exit(code)
+    return
+  }
   registerAppScheme(protocol)
   const home = resolveHome()
   const paths = homePaths(home)
@@ -55,7 +71,7 @@ async function boot(): Promise<void> {
   process.on('uncaughtException', (err) => log.error('uncaught exception', { err: errorMessage(err) }))
   process.on('unhandledRejection', (err) => log.error('unhandled rejection', { err: errorMessage(err) }))
 
-  const core = await createCore({ home, log: log.child('core') })
+  const core = await createCore({ home, log: log.child('core'), bridge: bridgeCommand() })
   await app.whenReady()
   onReady(core, log)
 }
@@ -121,6 +137,15 @@ function onReady(core: Core, log: Logger): void {
       }
       const r = mainWindow !== null ? await dialog.showOpenDialog(mainWindow, opts) : await dialog.showOpenDialog(opts)
       return r.canceled ? null : (r.filePaths[0] ?? null)
+    },
+    'mcp.addToEditor': async (req) => {
+      // The install link carries only Harpoon's own bridge command (never text from the page).
+      const config = bridgeCommand()
+      const url =
+        req.editor === 'vscode'
+          ? `vscode:mcp/install?${encodeURIComponent(JSON.stringify({ name: 'harpoon', type: 'stdio', ...config }))}`
+          : `cursor://anysphere.cursor-deeplink/mcp/install?name=harpoon&config=${encodeURIComponent(Buffer.from(JSON.stringify(config)).toString('base64'))}`
+      await shell.openExternal(url)
     },
     'shell.open': async (req) => {
       if (req.target === 'url') {

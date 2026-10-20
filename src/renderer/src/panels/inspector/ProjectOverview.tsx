@@ -5,12 +5,14 @@ import { edit } from '../../state/actions.ts'
 import { useModel } from '../../canvas/useScene.ts'
 import { FlowList } from '../FlowList.tsx'
 import { Problems, useProblems } from '../Problems.tsx'
+import { ResilienceReview, useResilienceFindings } from '../ResilienceReview.tsx'
 import { Section, TextArea, TextInput } from './fields.tsx'
 
 export function ProjectOverview({ readOnly }: { readOnly: boolean }): React.JSX.Element {
   const model = useModel()
   const m = model.meta
   const problems = useProblems()
+  const resilience = useResilienceFindings()
   const nodes = Object.values(model.nodes)
   const counts = {
     services: nodes.filter((n) => n.boundary === 'internal').length,
@@ -46,6 +48,10 @@ export function ProjectOverview({ readOnly }: { readOnly: boolean }): React.JSX.
 
       <Section title={`Problems (${problems.length})`} defaultOpen={problems.some((x) => x.severity !== 'info')}>
         <Problems />
+      </Section>
+
+      <Section title={`Resilience (${resilience.filter((f) => f.severity !== 'info').length})`} defaultOpen={resilience.some((f) => f.severity === 'error')}>
+        <ResilienceReview readOnly={readOnly} />
       </Section>
 
       <Section title="Flows">

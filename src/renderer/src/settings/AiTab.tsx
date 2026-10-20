@@ -2,7 +2,7 @@
 // each one starts with, and access for outside agents to Harpoon's MCP tools.
 import { CheckCircle2, CircleAlert, Copy, Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import type { AiDefaults, AiVendor, ExternalMcpView, ProviderView } from '@shared/ipc.ts'
+import type { AiDefaults, AiVendor, CodexPluginResult, ExternalMcpView, ProviderView } from '@shared/ipc.ts'
 import { Button } from '../components/ui/Button.tsx'
 import { Switch } from '../components/ui/Switch.tsx'
 import { invoke } from '../ipc/client.ts'
@@ -123,10 +123,21 @@ function OutsideAgents(): React.JSX.Element {
   const url = view.url ?? `http://127.0.0.1:${view.port}/mcp/harpoon`
   const token = view.token ?? '<token>'
   const shown = show ? token : '•'.repeat(24)
+  const b = view.bridge
+  const quote = (x: string): string => (/[\s"]/.test(x) ? JSON.stringify(x) : x)
+  const bridgeLine = b === null ? null : [b.command, ...b.args].map(quote).join(' ')
+  // Clients that run a command use the bridge (no token in their configuration); the rest connect over HTTP.
   const snippets: { title: string; text: string }[] = [
-    { title: 'Claude Code', text: `claude mcp add --transport http harpoon ${url} --header "Authorization: Bearer ${token}"` },
-    { title: 'Codex (~/.codex/config.toml; set HARPOON_MCP_TOKEN to the token)', text: `[mcp_servers.harpoon]\nurl = "${url}"\nbearer_token_env_var = "HARPOON_MCP_TOKEN"` },
-    { title: 'Other MCP clients (JSON)', text: JSON.stringify({ mcpServers: { harpoon: { type: 'http', url, headers: { Authorization: `Bearer ${token}` } } } }, null, 2) },
+    ...(b !== null && bridgeLine !== null
+      ? [
+          { title: 'Claude Code', text: `claude mcp add --scope user harpoon -- ${bridgeLine}` },
+          { title: 'Claude Desktop, Windsurf and other MCP clients (JSON, runs Harpoon --mcp)', text: JSON.stringify({ mcpServers: { harpoon: { command: b.command, args: b.args } } }, null, 2) },
+          { title: 'VS Code (.vscode/mcp.json)', text: JSON.stringify({ servers: { harpoon: { type: 'stdio', command: b.command, args: b.args } } }, null, 2) },
+        ]
+      : []),
+    { title: 'Over HTTP: Claude Code', text: `claude mcp add --transport http harpoon ${url} --header "Authorization: Bearer ${token}"` },
+    { title: 'Over HTTP: Codex config.toml (set HARPOON_MCP_TOKEN to the token)', text: `[mcp_servers.harpoon]\nurl = "${url}"\nbearer_token_env_var = "HARPOON_MCP_TOKEN"` },
+    { title: 'Over HTTP: other clients (JSON)', text: JSON.stringify({ mcpServers: { harpoon: { type: 'http', url, headers: { Authorization: `Bearer ${token}` } } } }, null, 2) },
   ]
   const portNum = Number(port)
   const portOk = Number.isInteger(portNum) && portNum >= 1024 && portNum <= 65535
@@ -178,6 +189,7 @@ function OutsideAgents(): React.JSX.Element {
               New token
             </Button>
           </div>
+          <ConnectApps hasBridge={b !== null} />
           {snippets.map((sn) => (
             <div key={sn.title} className="flex flex-col gap-1">
               <div className="flex items-center gap-2">
@@ -186,7 +198,7 @@ function OutsideAgents(): React.JSX.Element {
                   size="sm"
                   variant="ghost"
                   icon={<Copy />}
-                  onClick={() => void navigator.clipboard.writeText(sn.text).then(() => toast('Copied (it includes the token)', 'info'))}
+                  onClick={() => void navigator.clipboard.writeText(sn.text).then(() => toast(sn.text.includes(token) ? 'Copied (it includes the token)' : 'Copied', 'info'))}
                 >
                   Copy
                 </Button>
@@ -197,5 +209,59 @@ function OutsideAgents(): React.JSX.Element {
         </>
       )}
     </section>
+  )
+}
+
+/** One-click setup for the apps that support it: Codex (CLI, desktop app and IDE extension), VS Code, Cursor. */
+function ConnectApps({ hasBridge }: { hasBridge: boolean }): React.JSX.Element | null {
+  const [codex, setCodex] = useState<CodexPluginResult | null>(null)
+  const [busy, setBusy] = useState(false)
+  if (!hasBridge) return null
+  const installCodex = async (): Promise<void> => {
+    if (!window.confirm('Install the Harpoon plugin for Codex? Harpoon writes a local plugin marketplace in its own folder and runs "codex plugin marketplace add" and "codex plugin add harpoon@harpoon". The Codex CLI, desktop app and IDE extension all see it.')) return
+    setBusy(true)
+    const r = await invoke('mcp.external.codexPlugin', { install: true })
+    setBusy(false)
+    if (!r.ok) return toast(r.error.message, 'error')
+    setCodex(r.value)
+    const allOk = r.value.steps.every((x) => x.ok)
+    toast(allOk ? 'Harpoon plugin installed for Codex. Restart the Codex app to see it.' : 'The Codex plugin was written, but a step failed; see Settings → AI.', allOk ? 'info' : 'warn')
+  }
+  const editor = async (e: 'vscode' | 'cursor'): Promise<void> => {
+    const r = await invoke('mcp.addToEditor', { editor: e })
+    if (!r.ok) toast(r.error.message, 'error')
+  }
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border p-3">
+      <span className="font-medium">Connect an app</span>
+      <p className="text-muted-foreground">
+        These run Harpoon itself as a local MCP server (Harpoon --mcp), which uses the token from this computer&apos;s settings, so no token goes into the app&apos;s
+        configuration. Keep Harpoon open, with a project, while the agent works.
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        <Button size="sm" variant="outline" disabled={busy} onClick={() => void installCodex()} title="Codex CLI, desktop app and IDE extension">
+          {busy ? 'Installing…' : 'Install for Codex'}
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => void editor('vscode')}>
+          Add to VS Code
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => void editor('cursor')}>
+          Add to Cursor
+        </Button>
+      </div>
+      {codex !== null && (
+        <div className="flex flex-col gap-1 text-[11px]">
+          {codex.steps.map((st) => (
+            <p key={st.command} className={st.ok ? 'text-muted-foreground' : 'text-warning'}>
+              {st.ok ? '✓' : '✗'} {st.command}
+              {!st.ok && st.output !== '' ? `: ${st.output}` : ''}
+            </p>
+          ))}
+          <p className="text-muted-foreground">
+            By hand: <code className="font-mono">codex plugin marketplace add &quot;{codex.dir}&quot;</code>, then <code className="font-mono">codex plugin add harpoon@harpoon</code>.
+          </p>
+        </div>
+      )}
+    </div>
   )
 }

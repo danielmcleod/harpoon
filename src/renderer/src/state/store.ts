@@ -4,6 +4,7 @@ import { create } from 'zustand'
 import type { AiMode, AiRunView, AiVendor, AppState, Proposal, ProjectView, ProviderView, ThemeState, ToastLevel } from '@shared/ipc.ts'
 import type { Op } from '@shared/model/ops.ts'
 import type { BlastDirection } from '@shared/model/queries.ts'
+import type { FailureScope } from '@shared/model/resilience.ts'
 
 export type Mode = 'edit' | 'docs' | 'sim'
 
@@ -28,7 +29,8 @@ export interface UiState {
   expanded: Record<string, true>
   /** Focused subgraph (null: the whole system). */
   focusId: string | null
-  blast: { id: string; dir: BlastDirection; hops: number } | null
+  /** Impact analysis; `failure`: what one failure takes down (instance, zone, the node) instead of the call graph. */
+  blast: { id: string; dir: BlastDirection; hops: number; failure?: FailureScope | null } | null
   leftCollapsed: boolean
   rightCollapsed: boolean
   aiOpen: boolean
@@ -38,7 +40,7 @@ export interface UiState {
   /** Connect mode: the node a new connector starts from; the next node clicked is its target. */
   connectFrom: string | null
   /** Lens: colour nodes by status, team, data or phase; legend keys in `hidden` dim (null: lens off). */
-  lens: { kind: 'status' | 'team' | 'data' | 'phase'; hidden: string[] } | null
+  lens: { kind: 'status' | 'team' | 'data' | 'phase' | 'resilience'; hidden: string[] } | null
   /** The diagram, the tables, both (tables under the diagram), or the roadmap board. */
   view: 'canvas' | 'tables' | 'split' | 'roadmap' | 'decisions' | 'notes'
   /** Notes view: the open note path ('@tasks': open action items; null: none). */
@@ -51,6 +53,9 @@ export interface UiState {
   settings: 'general' | 'repos' | 'teams' | 'phases' | 'data' | 'rules' | 'notion' | 'ai' | null
   /** Help dialog: the open topic (null: closed). */
   help: 'start' | 'diagram' | 'views' | 'ai' | 'rules' | 'saving' | 'keys' | null
+  /** Notes view: the live diagram beside the note, and the inspector (closed unless opened, to keep the room). */
+  notesDiagram: boolean
+  notesInspector: boolean
   /** Bumped to ask the canvas to fit the view (after open, focus change). */
   fitNonce: number
   /** Bumped with a node id to ask the canvas to centre on it. */
@@ -127,6 +132,8 @@ export const INITIAL_UI: UiState = {
   lens: null,
   settings: null,
   help: null,
+  notesDiagram: true,
+  notesInspector: false,
   view: 'canvas',
   asOf: null,
   records: null,

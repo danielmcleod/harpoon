@@ -7,7 +7,9 @@ import { RoadmapBoard } from '../roadmap/RoadmapBoard.tsx'
 import { TablesView } from '../tables/TablesView.tsx'
 import { cn } from '../lib/cn.ts'
 import { ProjectSettings } from '../settings/ProjectSettings.tsx'
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
+import type { CanvasOverlays } from '../canvas/overlays.ts'
+import { useNotes } from '../notes/notesStore.ts'
 import { AiPanel } from '../ai/AiPanel.tsx'
 import { Canvas } from '../canvas/Canvas.tsx'
 import { CanvasChrome } from '../canvas/CanvasChrome.tsx'
@@ -36,7 +38,16 @@ export function Workspace(): React.JSX.Element {
   const simOverlays = useSimOverlays(simMode)
   const flowOverlays = useFlowOverlays(!simMode)
   const presenting = usePresent((s) => s.presenting)
-  const overlays = simOverlays ?? flowOverlays
+  const notesOn = useStore((s) => s.ui.view === 'notes' && s.ui.mode !== 'sim')
+  const notesDiagram = useStore((s) => s.ui.notesDiagram)
+  const notesInspector = useStore((s) => s.ui.notesInspector)
+  const mentioned = useNotes((s) => s.mentioned)
+  // Beside a note, the diagram marks what the note mentions.
+  const notesOverlays = useMemo<CanvasOverlays | undefined>(() => {
+    if (!notesOn) return undefined
+    return { ...flowOverlays, marks: new Map(mentioned.map((id) => [id, { label: '@', tone: 'info' as const, title: 'Mentioned in this note' }])) }
+  }, [notesOn, flowOverlays, mentioned])
+  const overlays = simOverlays ?? notesOverlays ?? flowOverlays
   const view = useStore((s) => s.ui.view)
   // The simulator and presentations run on the diagram.
   const board = !simMode && !presenting && view === 'roadmap'
@@ -79,7 +90,8 @@ export function Workspace(): React.JSX.Element {
       {!presenting && <TopBar />}
       <div className="flex min-h-0 flex-1">
         {!presenting && <ViewRail />}
-        {!leftCollapsed && !presenting && <LeftPanel />}
+        {/* Notes need the room for the note and the diagram, not the tree and palette. */}
+        {!leftCollapsed && !presenting && !notesView && <LeftPanel />}
         <main className="relative flex min-w-0 flex-1 flex-col">
           {showCanvas && (
             <div className={cn('relative min-h-0', showTables ? 'basis-[56%]' : 'flex-1')}>
@@ -91,7 +103,20 @@ export function Workspace(): React.JSX.Element {
           )}
           {board && <RoadmapBoard />}
           {decisionsView && <DecisionsView />}
-          {notesView && <NotesView />}
+          {notesView && (
+            <div className="flex min-h-0 flex-1">
+              <div className={cn('min-w-0', notesDiagram ? 'min-w-[540px] flex-[5]' : 'flex-1')}>
+                <NotesView />
+              </div>
+              {notesDiagram && (
+                <div className="relative min-w-[320px] flex-[6] border-l">
+                  <Canvas {...(overlays !== undefined ? { overlays } : {})}>
+                    <CanvasChrome />
+                  </Canvas>
+                </div>
+              )}
+            </div>
+          )}
           {showTables && (
             <div className={cn('min-h-0', showCanvas ? 'basis-[44%] border-t' : 'flex-1')}>
               <TablesView />
@@ -100,7 +125,8 @@ export function Workspace(): React.JSX.Element {
           {presenting && <PresentationBar />}
         </main>
         {/* One right-hand panel at a time: the AI assistant or the inspector. */}
-        {presenting ? null : aiOpen ? <AiPanel /> : simMode ? <SimPanel /> : !rightCollapsed && <Inspector />}
+        {/* In notes the inspector opens only on request (the right-panel button), so the note and diagram keep the room. */}
+        {presenting ? null : aiOpen ? <AiPanel /> : simMode ? <SimPanel /> : (notesView ? notesInspector : !rightCollapsed) && <Inspector />}
       </div>
       <ProjectSettings />
     </div>

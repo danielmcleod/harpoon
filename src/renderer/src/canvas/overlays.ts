@@ -12,4 +12,13 @@ export interface CanvasOverlays {
   particles?: boolean
   /** Overrides the blast/search highlight. */
   highlight?: ReadonlySet<string> | null
+  /** Small markers on nodes (where traffic stops, single points of failure); hidden nodes mark their container. */
+  marks?: ReadonlyMap<string, NodeMark> | null
+}
+
+export interface NodeMark {
+  label: string
+  /** Tooltip: why. */
+  title: string
+  tone: 'bad' | 'warn' | 'info'
 }

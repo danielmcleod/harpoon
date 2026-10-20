@@ -9,16 +9,17 @@ import type { Logger } from '../log.ts'
 import { McpHost } from './mcp-host.ts'
 import type { McpRoute } from './mcp-host.ts'
 import type { AiRunner } from './runner.ts'
+import type { BridgeCommand } from './agent-setup.ts'
 
 const ROUTE = 'harpoon'
 
 export class ExternalMcp {
-  readonly #o: { state: AppStateStore; ai: AiRunner; log: Logger }
+  readonly #o: { state: AppStateStore; ai: AiRunner; log: Logger; bridge: BridgeCommand | null }
   #host: McpHost | null = null
   #route: McpRoute | null = null
   #error: string | null = null
 
-  constructor(o: { state: AppStateStore; ai: AiRunner; log: Logger }) {
+  constructor(o: { state: AppStateStore; ai: AiRunner; log: Logger; bridge: BridgeCommand | null }) {
     this.#o = o
   }
 
@@ -73,6 +74,7 @@ export class ExternalMcp {
       token: cfg.enabled ? cfg.token : null,
       error: this.#error,
       lastCall: this.#o.ai.externalLastCall,
+      bridge: this.#o.bridge,
     }
   }
 }

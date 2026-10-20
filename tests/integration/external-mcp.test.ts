@@ -9,6 +9,8 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { createCore } from '../../src/core/app-core.ts'
 import type { Core } from '../../src/core/app-core.ts'
 import { nullLogger } from '../../src/core/log.ts'
+import { runMcpBridge } from '../../src/core/ai/mcp-bridge.ts'
+import { PassThrough } from 'node:stream'
 import type { ExternalMcpView, Proposal } from '../../src/shared/ipc.ts'
 
 const dirs: string[] = []
@@ -55,6 +57,8 @@ it('lets an agent with the token read the project and propose a change', async (
   client = await connect(url, token)
   const overview = await client.callTool({ name: 'get_overview', arguments: {} })
   expect(JSON.stringify(overview.content)).toContain('auth-service')
+  const traffic = await client.callTool({ name: 'check_traffic', arguments: {} })
+  expect(JSON.stringify(traffic.content)).toContain('reached')
   const added = await client.callTool({ name: 'add_node', arguments: { name: 'Fraud scorer', kind: 'service' } })
   expect(added.isError).not.toBe(true)
   await client.callTool({ name: 'submit_proposal', arguments: { title: 'Add a fraud scorer', rationale: 'Score orders' } })
@@ -64,4 +68,30 @@ it('lets an agent with the token read the project and propose a change', async (
     const r = await core?.invoke('proposal.list', undefined)
     return r?.ok === true ? (r.value as Proposal[]).map((p) => p.title) : []
   }).toContain('Add a fraud scorer')
+}, 30_000)
+
+it('relays a stdio client through the bridge, and says when access is off', async () => {
+  core = await createCore({ home: await tmp(), log: nullLogger })
+  const input = new PassThrough()
+  const output = new PassThrough()
+  const lines: string[] = []
+  output.on('data', (d: Buffer) => lines.push(...String(d).split('\n').filter((l) => l.trim() !== '')))
+  const done = runMcpBridge({ stateFile: core.paths.state, input, output })
+  const ask = async (msg: object, n: number): Promise<void> => {
+    input.write(`${JSON.stringify(msg)}\n`)
+    await expect.poll(() => lines.length, { timeout: 5000 }).toBeGreaterThanOrEqual(n)
+  }
+  // Off: an error that says how to turn it on.
+  await ask({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, 1)
+  expect(lines[0]).toContain('Outside agents')
+  const on = await core.invoke('mcp.external.set', { enabled: true, port: 40000 + Math.floor(Math.random() * 20000) })
+  if (!on.ok) throw new Error(on.error.message)
+  await ask({ jsonrpc: '2.0', id: 2, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' } } }, 2)
+  expect(lines[1]).toContain('"serverInfo"')
+  const opened = await core.invoke('project.create', { dir: await tmp(), template: 'sample' })
+  if (!opened.ok) throw new Error(opened.error.message)
+  await ask({ jsonrpc: '2.0', id: 3, method: 'tools/list' }, 3)
+  expect(lines[2]).toContain('check_traffic')
+  input.end()
+  expect(await done).toBe(0)
 }, 30_000)

@@ -24,6 +24,7 @@ import { deleteSelection } from '../selectionOps.ts'
 import { EvidenceList } from './EvidenceList.tsx'
 import { Chip, NumberInput, Row, Section, Select, TextArea, TextInput, orNull } from './fields.tsx'
 import { DataClassPicker, NotesEditor, PhasePicker, TeamPicker, useDataScope } from './governance.tsx'
+import { ResilienceSection } from './ResilienceSection.tsx'
 
 export const STATUS_LABEL: Record<HxNode['status'], string> = {
   existing: 'Existing',
@@ -252,6 +253,8 @@ export function NodeInspector({ node: n, readOnly }: { node: HxNode; readOnly: b
           <EvidenceList evidence={n.evidence} provenance={n.provenance} confidence={n.confidence} />
         </Section>
       )}
+
+      <ResilienceSection node={n} readOnly={readOnly} />
 
       <Section title="Simulation" defaultOpen={false}>
         <Row label="Capacity" hint="Requests per second before it saturates">

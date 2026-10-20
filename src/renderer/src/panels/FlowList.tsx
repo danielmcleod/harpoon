@@ -1,6 +1,7 @@
 // Flows (user journeys / request paths): ordered connector steps through the architecture. Selecting one
 // emphasizes its path on the canvas; the simulator and presentations use them too. Any flow opens as a sequence diagram.
-import { ArrowDown, ArrowUp, ChartNoAxesGantt, Plus, Route, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChartNoAxesGantt, Plus, Route, Sparkles, Trash2 } from 'lucide-react'
+import { reviewFlows } from '../sim/investigate.ts'
 import { useState } from 'react'
 import { uniqueId } from '@shared/model/ids.ts'
 import { FlowZ } from '@shared/model/schema.ts'
@@ -49,9 +50,14 @@ export function FlowList({ readOnly }: { readOnly: boolean }): React.JSX.Element
       </ul>
       {flows.length === 0 && <p className="text-xs text-muted-foreground">No flows yet. A flow traces a request (login, checkout) hop by hop.</p>}
       {!readOnly && (
-        <Button size="sm" variant="ghost" className="mt-1" icon={<Plus />} onClick={add}>
-          New flow
-        </Button>
+        <div className="mt-1 flex flex-wrap gap-1">
+          <Button size="sm" variant="ghost" icon={<Plus />} onClick={add}>
+            New flow
+          </Button>
+          <Button size="sm" variant="ghost" icon={<Sparkles />} onClick={() => reviewFlows(active?.id ?? null)} title="The AI checks flows against the code, fixes broken steps, completes partial flows and adds missing journeys">
+            {active !== undefined ? 'Review this flow with AI' : 'Review flows with AI'}
+          </Button>
+        </div>
       )}
 
       {active !== undefined && (

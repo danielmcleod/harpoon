@@ -1,6 +1,6 @@
 // The simulator's side panel (mockup 2): headline numbers, throughput / latency / error charts, the selected node's
 // live state, load controls, fault injection (crash, slow down, partition, rate limit, error burst) and flow tracing.
-import { Activity, Pause, Play, Plus, Route, SkipBack, SkipForward, Trash2, X, Zap } from 'lucide-react'
+import { Activity, OctagonX, Pause, Sparkles, Play, Plus, Route, SkipBack, SkipForward, Trash2, X, Zap } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { FaultType, LoadProfile } from '@shared/sim/engine.ts'
 import { Button } from '../components/ui/Button.tsx'
@@ -11,6 +11,10 @@ import { addFault, currentFrame, endFault, removeFault, setScenario, simTime, us
 import { Sparkline } from './Sparkline.tsx'
 import { ScenarioBar } from './ScenarioBar.tsx'
 import { clock } from './Timeline.tsx'
+import { investigateTraffic, reviewFlows } from './investigate.ts'
+import { lintModel } from '@shared/model/lint.ts'
+import { useTrafficBreaks } from './useTrafficBreaks.ts'
+import { select } from '../state/actions.ts'
 
 const FAULT_LABEL: Record<FaultType, string> = {
   down: 'Crash (node down)',
@@ -18,6 +22,9 @@ const FAULT_LABEL: Record<FaultType, string> = {
   partition: 'Network partition (cut a link)',
   ratelimit: 'Rate limit (cap rps)',
   errors: 'Error burst (error rate)',
+  instance: 'Lose an instance (of a node)',
+  zone: 'Zone outage (every node in it)',
+  region: 'Region outage',
 }
 
 const fmtRps = (v: number): string => (v >= 1000 ? `${(v / 1000).toFixed(1)}k rps` : `${Math.round(v)} rps`)
@@ -31,6 +38,7 @@ export function SimPanel(): React.JSX.Element {
   const cursor = useSim((s) => s.cursor)
   const scenario = useSim((s) => s.scenario)
   const trace = useSim((s) => s.trace)
+  const mode = useStore((s) => s.ui.mode)
   const frame = currentFrame({ ...useSim.getState(), frames, cursor })
   const [faultType, setFaultType] = useState<FaultType>('down')
   const [faultTarget, setFaultTarget] = useState('')
@@ -50,10 +58,14 @@ export function SimPanel(): React.JSX.Element {
   const Icon = sel !== undefined ? kindIcon(sel.kind) : Activity
   const nodes = Object.values(model.nodes).sort((a, b) => a.name.localeCompare(b.name))
   const conns = Object.values(model.connectors)
+  // Zones and regions as recorded on nodes (resilience zones; the region field).
+  const zones = [...new Set(Object.values(model.nodes).flatMap((n) => n.resilience?.zones ?? []))].sort()
+  const regions = [...new Set(Object.values(model.nodes).flatMap((n) => (n.region !== null ? [n.region] : [])))].sort()
   const now = simTime()
   const flow = trace !== null ? model.flows[trace.flowId] : undefined
   const step = flow !== undefined && trace !== null ? flow.steps[trace.step] : undefined
   const stepConn = step !== undefined ? model.connectors[step.connectorId] : undefined
+  const editor = mode !== 'docs'
 
   return (
     <aside className="scroll-region w-[360px] shrink-0 overflow-y-auto border-l bg-panel" aria-label="Simulation">
@@ -86,6 +98,8 @@ export function SimPanel(): React.JSX.Element {
         <Sparkline label="End-to-end latency" values={series.lat} times={series.t} color="var(--hx-violet)" format={fmtMs} />
         <Sparkline label="Error rate" values={series.err} times={series.t} color="var(--hx-rose)" format={(v) => `${v.toFixed(2)}%`} />
       </div>
+
+      <TrafficStops />
 
       <section className="border-b p-3">
         <h3 className="mb-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Selected</h3>
@@ -166,8 +180,14 @@ export function SimPanel(): React.JSX.Element {
           </select>
           <div className="flex gap-1.5">
             <select value={faultTarget} onChange={(e) => setFaultTarget(e.target.value)} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1 text-xs" aria-label="Fault target">
-              <option value="">{faultType === 'partition' ? 'Pick a connector…' : 'Pick a node…'}</option>
-              {faultType === 'partition'
+              <option value="">{faultType === 'partition' ? 'Pick a connector…' : faultType === 'zone' ? (zones.length > 0 ? 'Pick a zone…' : 'No zones recorded') : faultType === 'region' ? (regions.length > 0 ? 'Pick a region…' : 'No regions recorded') : 'Pick a node…'}</option>
+              {faultType === 'zone' || faultType === 'region'
+                ? (faultType === 'zone' ? zones : regions).map((z) => (
+                    <option key={z} value={z}>
+                      {z}
+                    </option>
+                  ))
+                : faultType === 'partition'
                 ? conns.map((c) => (
                     <option key={c.id} value={c.id}>
                       {model.nodes[c.source]?.name} → {model.nodes[c.target]?.name}
@@ -190,7 +210,7 @@ export function SimPanel(): React.JSX.Element {
         <ul className="mt-2 flex flex-col gap-1">
           {scenario.faults.map((f) => {
             const activeNow = now >= f.from && (f.until === null || now < f.until)
-            const target = f.type === 'partition' ? `${model.nodes[model.connectors[f.target]?.source ?? '']?.name ?? '?'} → ${model.nodes[model.connectors[f.target]?.target ?? '']?.name ?? '?'}` : (model.nodes[f.target]?.name ?? f.target)
+            const target = f.type === 'zone' || f.type === 'region' ? f.target : f.type === 'partition' ? `${model.nodes[model.connectors[f.target]?.source ?? '']?.name ?? '?'} → ${model.nodes[model.connectors[f.target]?.target ?? '']?.name ?? '?'}` : (model.nodes[f.target]?.name ?? f.target)
             return (
               <li key={f.id} className={cn('flex items-center gap-2 rounded-md border px-2 py-1 text-[11px]', activeNow && 'border-destructive/50 bg-destructive/10')}>
                 <Zap className={cn('size-3', activeNow ? 'text-destructive' : 'text-muted-foreground')} />
@@ -218,7 +238,14 @@ export function SimPanel(): React.JSX.Element {
       </section>
 
       <section className="p-3">
-        <h3 className="mb-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Trace a flow</h3>
+        <div className="mb-2 flex items-center gap-2">
+          <h3 className="flex-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Trace a flow</h3>
+          {editor && (
+            <Button size="sm" variant="ghost" icon={<Sparkles />} onClick={() => reviewFlows(null)} title="The AI checks the flows against the code, fixes broken ones and adds missing journeys">
+              Review flows with AI
+            </Button>
+          )}
+        </div>
         <div className="flex flex-wrap gap-1">
           {Object.values(model.flows).map((f) => (
             <button
@@ -251,6 +278,7 @@ export function SimPanel(): React.JSX.Element {
                 </Button>
               </span>
             </div>
+            <FlowProblems flowId={flow.id} />
             {stepConn !== undefined && step !== undefined && (
               <p className="mt-1 text-xs">
                 {model.nodes[step.direction === 'A' ? stepConn.source : stepConn.target]?.name} → {model.nodes[step.direction === 'A' ? stepConn.target : stepConn.source]?.name}{' '}
@@ -262,5 +290,63 @@ export function SimPanel(): React.JSX.Element {
         )}
       </section>
     </aside>
+  )
+}
+
+/** Where traffic stops or never gets to, and why; each with a way to investigate it with AI. */
+function TrafficStops(): React.JSX.Element | null {
+  const breaks = useTrafficBreaks()
+  const model = useStore((s) => s.project?.model)
+  const editor = useStore((s) => s.ui.mode !== 'docs')
+  if (breaks.length === 0 || model === undefined) return null
+  return (
+    <section className="border-b p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <h3 className="flex-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Where traffic stops ({breaks.length})</h3>
+        {editor && (
+          <Button size="sm" variant="ghost" icon={<Sparkles />} onClick={() => investigateTraffic(null)} title="The AI reads the code and infrastructure to find the real path, and proposes fixes">
+            Investigate all
+          </Button>
+        )}
+      </div>
+      <ul className="flex flex-col gap-1.5">
+        {breaks.map((b) => (
+          <li key={`${b.kind}:${b.nodeId}:${b.connectorId ?? ''}`} className="rounded-md border p-2 text-xs">
+            <button type="button" className="flex w-full items-start gap-1.5 text-left" onClick={() => select({ kind: 'node', ids: [b.nodeId] })}>
+              <OctagonX className={cn('mt-0.5 size-3.5 shrink-0', b.kind === 'dead-end' ? 'text-destructive' : 'text-warning')} />
+              <span>
+                <span className="block">{b.message}</span>
+                <span className="mt-0.5 block text-muted-foreground">{b.hint}</span>
+              </span>
+            </button>
+            {editor && (
+              <button type="button" className="mt-1 ml-5 text-[11px] text-primary hover:underline" onClick={() => investigateTraffic(b.nodeId)}>
+                Investigate with AI
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+/** A traced flow's problems (steps that do not link up or run the wrong way), with an AI fix. */
+function FlowProblems({ flowId }: { flowId: string }): React.JSX.Element | null {
+  const model = useStore((s) => s.project?.model)
+  const editor = useStore((s) => s.ui.mode !== 'docs')
+  const problems = useMemo(() => (model === undefined ? [] : lintModel(model).filter((p) => p.code.startsWith('flow-') && p.flowId === flowId)), [model, flowId])
+  if (problems.length === 0) return null
+  return (
+    <div className="mt-1.5 rounded border border-warning/40 bg-warning/10 p-1.5 text-[11px]">
+      {problems.map((p, i) => (
+        <p key={i}>{p.message}</p>
+      ))}
+      {editor && (
+        <button type="button" className="mt-1 text-primary hover:underline" onClick={() => reviewFlows(flowId)}>
+          Fix this flow with AI
+        </button>
+      )}
+    </div>
   )
 }

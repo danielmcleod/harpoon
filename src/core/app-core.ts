@@ -15,6 +15,8 @@ import type { Logger } from './log.ts'
 import { ProjectManager } from './project/manager.ts'
 import { McpHost } from './ai/mcp-host.ts'
 import { ExternalMcp } from './ai/external.ts'
+import { installCodexPlugin, writeCodexMarketplace } from './ai/agent-setup.ts'
+import type { BridgeCommand } from './ai/agent-setup.ts'
 import { ProposalStore } from './ai/proposals.ts'
 import { Providers } from './ai/providers.ts'
 import { AiRunner } from './ai/runner.ts'
@@ -26,6 +28,8 @@ import { discoverRepos, resolveRepos } from './project/repos.ts'
 export interface CoreOptions {
   home: string
   log: Logger
+  /** How to start the `--mcp` stdio bridge (the app's own executable); absent outside the app. */
+  bridge?: BridgeCommand
 }
 
 export type CoreHandlers = { [C in Cmd]?: (req: Req<C>) => Promise<Res<C>> }
@@ -53,7 +57,7 @@ export async function createCore(o: CoreOptions): Promise<Core> {
   const providers = new Providers({ probeCwd: join(paths.tmpDir, 'probe-cwd'), log: o.log.child('providers') })
   const mcp = new McpHost(o.log.child('mcp'))
   const ai = new AiRunner({ providers, mcp, bus, log: o.log.child('ai'), projects, proposals, runsDir: paths.runsDir, localRepoPaths: (id) => state.state.repoPaths[id] ?? {}, notionServer: (id) => state.state.notionServers[id] ?? null })
-  const external = new ExternalMcp({ state, ai, log: o.log.child('external-mcp') })
+  const external = new ExternalMcp({ state, ai, log: o.log.child('external-mcp'), bridge: o.bridge ?? null })
   await external.start()
   bus.on((e) => {
     if (e.kind === 'project-opened') void proposals.load(e.project.root)
@@ -89,6 +93,10 @@ export async function createCore(o: CoreOptions): Promise<Core> {
     'ai.providers': (r) => providers.views(r.force === true),
     'mcp.external.get': () => Promise.resolve(external.view()),
     'mcp.external.set': (r) => external.set(r),
+    'mcp.external.codexPlugin': async (r) => {
+      if (o.bridge === undefined) throw new HarpoonError('UNSUPPORTED', 'The Codex plugin needs the Harpoon app (it runs Harpoon --mcp).')
+      return r.install ? installCodexPlugin(paths.home, o.bridge) : { dir: await writeCodexMarketplace(paths.home, o.bridge), steps: [] }
+    },
     'ai.start': (r) => ai.start(r),
     'ai.send': (r) => ai.send(r.runId, r.prompt),
     'ai.cancel': (r) => Promise.resolve(ai.cancel(r.runId)),

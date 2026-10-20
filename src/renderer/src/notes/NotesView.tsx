@@ -1,7 +1,7 @@
 // The note taker: a project notebook and meeting series (one note per meeting). Write in Markdown with @mentions
 // and tasks; the AI summarizes, pulls out what to act on (each item with a suggested action), and prepares the
 // next meeting. Open action items across all notes are one click away.
-import { CalendarPlus, Check, CircleDot, Eye, FileText, ListTodo, NotebookPen, Pencil, Plus, Sparkles, Trash2, Users } from 'lucide-react'
+import { AtSign, CalendarPlus, Check, ChevronDown, ChevronRight, CircleDot, Eye, FileText, ListTodo, NotebookPen, PanelRightClose, PanelRightOpen, Pencil, Plus, Sparkles, Trash2, Users } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { NoteAction, NoteDoc, NoteItem } from '@shared/ipc.ts'
 import { adrNumber } from '@shared/export/adr.ts'
@@ -13,13 +13,13 @@ import { setUi, useStore } from '../state/store.ts'
 import { useModel } from '../canvas/useScene.ts'
 import { reveal } from '../panels/ArchitectureTree.tsx'
 import { Markdown } from '../ai/Markdown.tsx'
-import { AiNote } from '../ai/AiNote.tsx'
 import { openRecord } from '../records/decide.ts'
 import { useRecords } from '../records/recordsStore.ts'
 import { NoteEditor } from './NoteEditor.tsx'
 import type { MentionTarget } from './NoteEditor.tsx'
 import { runItem, runNoteTask } from './noteActions.ts'
-import { loadNotes, todayIso, useNotes } from './notesStore.ts'
+import { loadNotes, mentionedNodes, todayIso, useNotes } from './notesStore.ts'
+import { AI_NOTE_SHORT } from '../ai/AiNote.tsx'
 
 const ACTION_LABEL: Record<NoteAction, string> = {
   solutions: 'Propose solutions',
@@ -55,7 +55,7 @@ export function NotesView(): React.JSX.Element {
 
   return (
     <div className="flex h-full min-h-0 bg-background">
-      <aside className="flex w-72 shrink-0 flex-col border-r bg-popover">
+      <aside className="flex w-52 shrink-0 flex-col border-r bg-popover">
         <div className="min-h-0 flex-1 overflow-y-auto p-2 text-xs">
           <button type="button" onClick={() => setUi({ note: '@tasks' })} className={cn('mb-2 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent/60', path === '@tasks' && 'bg-accent')}>
             <ListTodo className="size-3.5 text-muted-foreground" />
@@ -203,6 +203,11 @@ function NotePage({ path }: { path: string }): React.JSX.Element {
   const sets = useRecords((s) => s.sets)
   const [doc, setDoc] = useState<NoteDoc | null>(null)
   const [preview, setPreview] = useState(false)
+  const [details, setDetails] = useState(false)
+  const showDiagram = useStore((s) => s.ui.notesDiagram)
+  const insert = useNotes((s) => s.insert)
+  const selection = useStore((s) => s.ui.selection)
+  const selectedNode = selection?.kind === 'node' && selection.ids.length === 1 ? model.nodes[selection.ids[0] ?? ''] : undefined
   const dirty = useRef(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const latest = useRef<NoteDoc | null>(null)
@@ -245,9 +250,16 @@ function NotePage({ path }: { path: string }): React.JSX.Element {
     ],
     [model.nodes, decisions, sets],
   )
+  // The diagram beside the note marks what it mentions.
+  const body = doc?.body ?? ''
+  useEffect(() => {
+    useNotes.setState({ mentioned: mentionedNodes(body) })
+  }, [body])
+  useEffect(() => () => useNotes.setState({ mentioned: [], insert: null }), [])
   const onMention = (kind: string, id: string): void => {
     if (kind === 'node' && model.nodes[id] !== undefined) {
-      setUi({ view: 'split' })
+      // Shown in place on the diagram beside the note.
+      setUi({ notesDiagram: true })
       reveal(model, id)
     } else if (kind === 'connector' && model.connectors[id] !== undefined) select({ kind: 'connector', ids: [id] })
     else if (kind === 'decision') openRecord('decision', id)
@@ -265,80 +277,93 @@ function NotePage({ path }: { path: string }): React.JSX.Element {
     update({ body: lines.join('\n') })
   }
 
+  const openItems = doc.meta.items.filter((i) => !i.done).length
   return (
-    <div className="flex h-full min-h-0">
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
-          <input
-            aria-label="Title"
-            readOnly={!editable}
-            value={doc.meta.title}
-            onChange={(e) => update({ meta: { ...doc.meta, title: e.target.value } })}
-            className="min-w-48 flex-1 bg-transparent text-base font-semibold outline-none"
+    <div className="flex h-full min-h-0 flex-col">
+      <header className="flex flex-wrap items-center gap-1.5 border-b px-4 py-2">
+        <input
+          aria-label="Title"
+          readOnly={!editable}
+          value={doc.meta.title}
+          onChange={(e) => update({ meta: { ...doc.meta, title: e.target.value } })}
+          className="min-w-40 flex-1 bg-transparent text-base font-semibold outline-none"
+        />
+        {doc.meta.date !== null && <input type="date" aria-label="Date" readOnly={!editable} value={doc.meta.date} onChange={(e) => update({ meta: { ...doc.meta, date: e.target.value || null } })} className="h-7 rounded-md border bg-background px-1 text-xs" />}
+        <Button size="sm" variant="ghost" icon={preview ? <Pencil /> : <Eye />} onClick={() => setPreview(!preview)}>
+          {preview ? 'Edit' : 'Preview'}
+        </Button>
+        {editable && (
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<Trash2 />}
+            className="text-muted-foreground"
+            aria-label="Delete note"
+            onClick={() => {
+              if (!window.confirm(isSeries ? 'Delete this meeting series and all its meetings?' : 'Delete this note?')) return
+              void invoke('notes.delete', { path }).then(() => setUi({ note: null }))
+            }}
           />
-          {doc.meta.date !== null && <input type="date" aria-label="Date" readOnly={!editable} value={doc.meta.date} onChange={(e) => update({ meta: { ...doc.meta, date: e.target.value || null } })} className="h-7 rounded-md border bg-background px-1 text-xs" />}
-          <Button size="sm" variant="ghost" icon={preview ? <Pencil /> : <Eye />} onClick={() => setPreview(!preview)}>
-            {preview ? 'Edit' : 'Preview'}
+        )}
+        <Button size="sm" variant="ghost" icon={showDiagram ? <PanelRightClose /> : <PanelRightOpen />} onClick={() => setUi({ notesDiagram: !showDiagram })} title={showDiagram ? 'Hide the diagram' : 'Show the diagram beside the note'}>
+          Diagram
+        </Button>
+      </header>
+      {editable && (
+        <div className="flex flex-wrap items-center gap-1.5 border-b px-4 py-1.5">
+          <Button size="sm" variant="outline" icon={<Sparkles />} onClick={() => (save(), void runNoteTask(doc, 'summarize'))} title={AI_NOTE_SHORT}>
+            Summarize
           </Button>
-          {editable && (
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={<Trash2 />}
-              className="text-muted-foreground"
-              aria-label="Delete note"
-              onClick={() => {
-                if (!window.confirm(isSeries ? 'Delete this meeting series and all its meetings?' : 'Delete this note?')) return
-                void invoke('notes.delete', { path }).then(() => setUi({ note: null }))
-              }}
-            />
+          <Button size="sm" variant="outline" icon={<ListTodo />} title={`Find tasks, decisions, open questions and changes, each with a suggested action. ${AI_NOTE_SHORT}`} onClick={() => (save(), void runNoteTask(doc, 'extract'))}>
+            Extract items
+          </Button>
+          {seriesId !== null && (
+            <Button size="sm" variant="outline" icon={<CalendarPlus />} title={`Draft the next meeting's agenda from open items, pending proposals and problems. ${AI_NOTE_SHORT}`} onClick={() => (save(), void runNoteTask(doc, 'agenda', `${seriesId}/_series.md`))}>
+              Prep next meeting
+            </Button>
           )}
-        </header>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4">
-          {preview || !editable ? (
-            <div className="py-3">
-              <Markdown text={doc.body} onMention={onMention} {...(editable ? { onToggleTask: toggleTask } : {})} />
-            </div>
-          ) : (
-            <NoteEditor value={doc.body} readOnly={!editable} mentions={mentionTargets} onChange={(body) => update({ body })} />
+          {selectedNode !== undefined && !preview && (
+            <Button size="sm" variant="ghost" icon={<AtSign />} className="ml-auto max-w-56" title="Insert a mention of the node selected on the diagram, at the cursor" onClick={() => insert?.(`[@${selectedNode.name}](harpoon:node/${selectedNode.id}) `)}>
+              <span className="truncate">Mention {selectedNode.name}</span>
+            </Button>
           )}
         </div>
+      )}
+      <div className="min-h-0 flex-1 overflow-y-auto px-4">
+        {preview || !editable ? (
+          <div className="py-3">
+            <Markdown text={doc.body} onMention={onMention} {...(editable ? { onToggleTask: toggleTask } : {})} />
+          </div>
+        ) : (
+          <NoteEditor value={doc.body} readOnly={!editable} mentions={mentionTargets} onChange={(body) => update({ body })} onInsertReady={(fn) => useNotes.setState({ insert: fn })} />
+        )}
       </div>
-      <aside className="flex w-80 shrink-0 flex-col gap-3 overflow-y-auto border-l bg-popover p-3 text-xs">
-        {editable && (
-          <div className="flex flex-wrap gap-1.5">
-            <Button size="sm" icon={<Sparkles />} onClick={() => (save(), void runNoteTask(doc, 'summarize'))}>
-              Summarize
-            </Button>
-            <Button size="sm" variant="outline" icon={<ListTodo />} title="Find tasks, decisions, open questions and changes, each with a suggested action" onClick={() => (save(), void runNoteTask(doc, 'extract'))}>
-              Extract items
-            </Button>
-            {seriesId !== null && (
-              <Button size="sm" variant="outline" icon={<CalendarPlus />} title="Draft the next meeting's agenda from open items, pending proposals and problems" onClick={() => (save(), void runNoteTask(doc, 'agenda', `${seriesId}/_series.md`))}>
-                Prep next meeting
-              </Button>
+      <section className="border-t bg-popover text-xs">
+        <button type="button" onClick={() => setDetails(!details)} className="flex w-full items-center gap-2 px-4 py-1.5 text-left hover:bg-accent/40" aria-expanded={details}>
+          {details ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+          <span className="font-semibold">Summary &amp; items</span>
+          <span className="text-muted-foreground">
+            {doc.meta.summary !== '' ? 'summary · ' : ''}
+            {doc.meta.items.length} item{doc.meta.items.length === 1 ? '' : 's'}
+            {openItems > 0 ? `, ${openItems} open` : ''}
+          </span>
+        </button>
+        {details && (
+          <div className="flex max-h-[40vh] flex-col gap-3 overflow-y-auto px-4 pb-3">
+            {doc.meta.summary !== '' && (
+              <div className="rounded-md border bg-background p-2">
+                <Markdown text={doc.meta.summary} onMention={onMention} />
+              </div>
             )}
-            <AiNote compact className="w-full" />
+            {doc.meta.items.length === 0 && <p className="text-muted-foreground">Extract items to turn the discussion into next steps: decisions to record, changes to plan, questions to explore.</p>}
+            <ul className="flex flex-col gap-1.5">
+              {doc.meta.items.map((it) => (
+                <ItemRow key={it.id} doc={doc} item={it} editable={editable} onDone={(done) => update({ meta: { ...doc.meta, items: doc.meta.items.map((x) => (x.id === it.id ? { ...x, done } : x)) } })} />
+              ))}
+            </ul>
           </div>
         )}
-        {doc.meta.summary !== '' && (
-          <section>
-            <h3 className="mb-1 text-[10.5px] font-semibold tracking-wide text-muted-foreground uppercase">Summary</h3>
-            <div className="rounded-md border bg-background p-2">
-              <Markdown text={doc.meta.summary} onMention={onMention} />
-            </div>
-          </section>
-        )}
-        <section>
-          <h3 className="mb-1 text-[10.5px] font-semibold tracking-wide text-muted-foreground uppercase">Items {doc.meta.items.length > 0 && `(${doc.meta.items.filter((i) => !i.done).length} open)`}</h3>
-          {doc.meta.items.length === 0 && <p className="text-muted-foreground">Extract items to turn the discussion into next steps: decisions to record, changes to plan, questions to explore.</p>}
-          <ul className="flex flex-col gap-1.5">
-            {doc.meta.items.map((it) => (
-              <ItemRow key={it.id} doc={doc} item={it} editable={editable} onDone={(done) => update({ meta: { ...doc.meta, items: doc.meta.items.map((x) => (x.id === it.id ? { ...x, done } : x)) } })} />
-            ))}
-          </ul>
-        </section>
-      </aside>
+      </section>
     </div>
   )
 }

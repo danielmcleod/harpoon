@@ -87,6 +87,8 @@ export function applySeed(draft: Draft, seed: Seed, runId: string, repoId: strin
         evidence: n.evidence.map((e) => ({ repo: repoId, path: e.path, lines: e.line === null ? null : [e.line, e.line], snippet: null })),
         confidence: 0.9,
         provenance: prov,
+        // What the infrastructure states about replicas; zones and failover are left for the AI pass to find.
+        resilience: n.instances === undefined ? null : { instances: n.instances, ...(n.instances <= 1 ? { deployment: 'single' } : {}) },
       }),
       at,
     })

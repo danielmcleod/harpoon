@@ -3,9 +3,10 @@
 // not rebuild on every tick.
 import { useMemo } from 'react'
 import type { Health } from '@shared/sim/engine.ts'
-import type { CanvasOverlays } from '../canvas/overlays.ts'
+import type { CanvasOverlays, NodeMark } from '../canvas/overlays.ts'
 import { useStore } from '../state/store.ts'
 import { currentFrame, useSim } from './simStore.ts'
+import { BREAK_MARK, useTrafficBreaks } from './useTrafficBreaks.ts'
 
 export function useSimOverlays(active: boolean): CanvasOverlays | undefined {
   const healthKey = useSim((s) => {
@@ -18,6 +19,7 @@ export function useSimOverlays(active: boolean): CanvasOverlays | undefined {
   const trace = useSim((s) => s.trace)
   const flows = useStore((s) => s.project?.model.flows)
   const connectors = useStore((s) => s.project?.model.connectors)
+  const breaks = useTrafficBreaks()
 
   return useMemo(() => {
     if (!active) return undefined
@@ -45,6 +47,12 @@ export function useSimOverlays(active: boolean): CanvasOverlays | undefined {
         highlight = new Set([c.source, c.target])
       }
     }
-    return { health, edgeHealth, particles: true, emphasis, highlight }
-  }, [active, healthKey, trace, flows, connectors])
+    // Where traffic stops: a marker on the node (or the container it is drawn inside).
+    const marks = new Map<string, NodeMark>()
+    for (const b of breaks) {
+      const mk = BREAK_MARK[b.kind]
+      if (mk !== undefined && !marks.has(b.nodeId)) marks.set(b.nodeId, { ...mk, title: `${b.message} ${b.hint}` })
+    }
+    return { health, edgeHealth, particles: true, emphasis, highlight, marks }
+  }, [active, healthKey, trace, flows, connectors, breaks])
 }

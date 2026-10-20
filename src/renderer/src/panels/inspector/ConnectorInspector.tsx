@@ -179,6 +179,9 @@ function SingleConnector({ c, readOnly }: { c: HxConnector; readOnly: boolean })
         <Row label="Circuit breaker">
           <Toggle label="Circuit breaker" checked={c.policies.circuitBreaker} readOnly={readOnly} onChange={(circuitBreaker) => patchConn(c.id, { policies: { ...c.policies, circuitBreaker } }, 'cb')} />
         </Row>
+        <Row label="Dependency" hint="Soft: the caller keeps working without it (fallback, cache, queue)">
+          <Select value={c.dependency} options={['hard', 'soft'] as const} labels={{ hard: 'Hard (caller fails with it)', soft: 'Soft (caller degrades)' }} readOnly={readOnly} onChange={(dependency) => patchConn(c.id, { dependency }, 'dependency')} />
+        </Row>
       </Section>
 
       <Section title="Docking & simulation" defaultOpen={false}>

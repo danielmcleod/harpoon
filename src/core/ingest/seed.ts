@@ -16,6 +16,8 @@ export interface SeedNode {
   description: string
   evidence: { path: string; line: number | null }[]
   namespace: string | null
+  /** Replicas the infrastructure asks for (compose deploy.replicas, Kubernetes spec.replicas); absent: not stated. */
+  instances?: number
 }
 
 export interface SeedLink {
@@ -110,6 +112,7 @@ async function readText(p: string): Promise<string | null> {
 
 interface ComposeService {
   image?: string
+  deploy?: { replicas?: unknown }
   build?: unknown
   depends_on?: unknown
   environment?: unknown
@@ -146,6 +149,7 @@ async function fromCompose(root: string, file: string, seed: Seed): Promise<void
       description: image !== '' ? `Container image ${image}.` : 'Built from source.',
       evidence: [{ path: rel, line: lineOf(text, new RegExp(`^\\s{2}${esc(name)}:`)) }],
       namespace: null,
+      ...(typeof svc.deploy?.replicas === 'number' ? { instances: svc.deploy.replicas } : {}),
     })
   }
   for (const [name, svc] of Object.entries(services)) {
@@ -174,7 +178,7 @@ async function fromK8s(root: string, file: string, seed: Seed): Promise<void> {
     return
   }
   for (const d of docs) {
-    const o = d as { kind?: string; metadata?: { name?: string; namespace?: string }; spec?: { template?: { spec?: { containers?: { image?: string }[] } }; jobTemplate?: unknown } } | null
+    const o = d as { kind?: string; metadata?: { name?: string; namespace?: string }; spec?: { replicas?: unknown; template?: { spec?: { containers?: { image?: string }[] } }; jobTemplate?: unknown } } | null
     if (o === null || typeof o !== 'object' || o.metadata?.name === undefined) continue
     if (!['Deployment', 'StatefulSet', 'DaemonSet', 'CronJob'].includes(o.kind ?? '')) continue
     const image = o.spec?.template?.spec?.containers?.[0]?.image ?? ''
@@ -190,6 +194,8 @@ async function fromK8s(root: string, file: string, seed: Seed): Promise<void> {
       description: `Kubernetes ${o.kind}${image !== '' ? ` running ${image}` : ''}.`,
       evidence: [{ path: rel, line: lineOf(text, new RegExp(`name:\\s*${esc(o.metadata.name)}\\b`)) }],
       namespace: o.metadata.namespace ?? null,
+      // A Deployment or StatefulSet without replicas runs one.
+      ...(o.kind === 'Deployment' || o.kind === 'StatefulSet' ? { instances: typeof o.spec?.replicas === 'number' ? o.spec.replicas : 1 } : {}),
     })
   }
   seed.notes.push(`${rel}: Kubernetes workloads`)
@@ -246,6 +252,7 @@ function upsertNode(seed: Seed, n: SeedNode): void {
     cur.evidence.push(...n.evidence)
     if (cur.techStack === null) cur.techStack = n.techStack
     if (cur.namespace === null) cur.namespace = n.namespace
+    if (cur.instances === undefined && n.instances !== undefined) cur.instances = n.instances
   }
 }
 

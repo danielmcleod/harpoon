@@ -3,17 +3,30 @@
 import { dataClassCatalog, effectiveTeam, phasesInOrder } from '@shared/model/governance.ts'
 import type { ScopeReason } from '@shared/model/governance.ts'
 import { STATUSES } from '@shared/model/schema.ts'
+import { haLevel } from '@shared/model/resilience.ts'
+import type { HaLevel } from '@shared/model/resilience.ts'
 import type { HxNode, Model, Status } from '@shared/model/schema.ts'
 
-export const LENS_KINDS = ['status', 'team', 'data', 'phase'] as const
+export const LENS_KINDS = ['status', 'team', 'data', 'phase', 'resilience'] as const
 export type LensKind = (typeof LENS_KINDS)[number]
 
-export const LENS_LABEL: Record<LensKind, string> = { status: 'Status', team: 'Team', data: 'Data', phase: 'Phase' }
+export const LENS_LABEL: Record<LensKind, string> = { status: 'Status', team: 'Team', data: 'Data', phase: 'Phase', resilience: 'Resilience' }
 export const LENS_HINT: Record<LensKind, string> = {
   status: 'Colour nodes by status (built, in progress, planned…)',
   team: 'Colour nodes by owning team (a node without one inherits its parent’s)',
   data: 'Colour nodes by the regulated data they handle; dashed: in scope through connectors or inner parts',
   phase: 'Colour nodes by the roadmap phase their change lands in',
+  resilience: 'Colour nodes by how much failure they survive (region, zone, instance, a single copy, not documented); SPOF marks single points of failure on the request path',
+}
+
+const HA: Record<HaLevel, { label: string; color: string }> = {
+  region: { label: 'Multi-region', color: 'var(--hx-ok)' },
+  zone: { label: 'Multi-zone', color: 'var(--hx-cyan)' },
+  instance: { label: 'Several instances, one zone', color: 'var(--hx-blue)' },
+  single: { label: 'Single instance', color: 'var(--hx-warn)' },
+  unknown: { label: 'Not documented', color: 'var(--hx-slate)' },
+  external: { label: 'Outside service', color: 'var(--hx-violet)' },
+  none: { label: 'Clients (not run by you)', color: 'var(--hx-slate)' },
 }
 
 export const STATUS_COLOR: Record<Status, string> = {
@@ -86,6 +99,13 @@ export function computeLens(m: Model, kind: LensKind, scope: Map<string, Map<str
     }
     // Hide catalog entries nobody uses, so the legend stays short.
     for (let i = legend.length - 1; i >= 0; i--) if (legend[i]?.count === 0 && legend[i]?.key !== 'none') legend.splice(i, 1)
+  } else if (kind === 'resilience') {
+    for (const [k, v] of Object.entries(HA)) entry(k, v.label, v.color)
+    for (const n of nodes) {
+      const lvl = haLevel(m, n.id)
+      mark(n, [{ key: lvl, label: HA[lvl].label, color: HA[lvl].color }], n.resilience === null && lvl !== 'unknown')
+    }
+    for (let i = legend.length - 1; i >= 0; i--) if (legend[i]?.count === 0) legend.splice(i, 1)
   } else {
     const phases = phasesInOrder(m.meta)
     entry('today', 'Today (no change)', NEUTRAL)

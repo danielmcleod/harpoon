@@ -4,6 +4,7 @@ import type { HexStyle } from '@shared/geometry/hex.ts'
 import type { ChangeKind } from '@shared/model/diff.ts'
 import type { HxConnector, HxNode } from '@shared/model/schema.ts'
 import type { LensMark } from './lensMarks.ts'
+import type { NodeMark } from './overlays.ts'
 
 export type Health = 'ok' | 'warn' | 'bad'
 
@@ -23,9 +24,11 @@ export interface HexData extends Record<string, unknown> {
   /** A label for ghosts: where the outside node lives. */
   context: string | null
   /** Impact analysis: this node's role and distance. */
-  impact: { hop: number; kind: 'origin' | 'affected' | 'needed' } | null
+  impact: { hop: number; kind: 'origin' | 'affected' | 'needed' | 'degraded' } | null
   /** Lens: drawn in the lens colour with a label (null: lens off). */
   lens: LensMark | null
+  /** A marker (where traffic stops, a single point of failure). */
+  mark: NodeMark | null
 }
 
 export type HexFlowNode = Node<HexData, 'hex' | 'container'>

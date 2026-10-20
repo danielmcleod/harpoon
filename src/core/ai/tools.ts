@@ -22,6 +22,11 @@ import {
   HOSTINGS,
   NODE_KINDS,
   NodeZ,
+  ResilienceZ,
+  DEPLOYMENTS,
+  FAILOVERS,
+  HA_MODES,
+  DEPENDENCIES,
   SENSITIVITIES,
   STATUSES,
 } from '../../shared/model/schema.ts'
@@ -31,6 +36,8 @@ import type { NoteAction, NoteItemKind } from '../../shared/ipc.ts'
 import { RuleZ, ruleProblem } from '../../shared/model/rules.ts'
 import type { Rule } from '../../shared/model/rules.ts'
 import type { AiMode, Effort } from '../../shared/ipc.ts'
+import { entryNodes, reach, trafficBreaks } from '../../shared/sim/paths.ts'
+import { resilienceFindings } from '../../shared/model/resilience.ts'
 import { redactText } from '../../shared/redact.ts'
 import type { Draft} from './draft.ts';
 import { DraftError } from './draft.ts'
@@ -131,6 +138,31 @@ const evidenceOf = (e: z.infer<typeof EvidenceIn>[] | undefined): Evidence[] =>
     lines: x.startLine === undefined ? null : ([x.startLine, Math.max(x.startLine, x.endLine ?? x.startLine)] as [number, number]),
     snippet: scrubOpt(x.snippet),
   }))
+
+/** How a node is deployed (only what the code or infrastructure shows; omit what you do not know). */
+const ResilienceIn = z
+  .object({
+    deployment: z.enum(DEPLOYMENTS).nullable().optional(),
+    instances: z.number().int().min(0).max(100_000).nullable().optional().describe('Minimum running instances (replicas)'),
+    zones: z.array(z.string().max(200)).max(20).optional().describe('Availability zones or data centres'),
+    failover: z.enum(FAILOVERS).nullable().optional(),
+    mode: z.enum(HA_MODES).nullable().optional(),
+    autoscaling: z.boolean().nullable().optional(),
+    backups: z.boolean().nullable().optional(),
+    rpo: z.string().max(200).nullable().optional(),
+    rto: z.string().max(200).nullable().optional(),
+    notes: z.string().max(2000).nullable().optional(),
+  })
+  .describe('Availability: deployment, instances, zones, failover, backups (from Kubernetes replicas/HPA/PDB, autoscaling groups, Multi-AZ settings, Terraform AZ lists, compose deploy.replicas)')
+
+/** Merge stated resilience fields onto what the node has. */
+function resilienceOf(cur: HxNode['resilience'], a: z.infer<typeof ResilienceIn> | undefined): HxNode['resilience'] | undefined {
+  if (a === undefined) return undefined
+  const base = cur ?? ResilienceZ.parse({})
+  const next: Record<string, unknown> = { ...base }
+  for (const [k, v] of Object.entries(a)) if (v !== undefined) next[k] = typeof v === 'string' ? scrubOpt(v) : v
+  return ResilienceZ.parse(next)
+}
 
 const FeatureIn = z.object({
   id: z.string().optional(),
@@ -459,6 +491,7 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
         near: z.string().optional().describe('Place it next to this existing node (same level)'),
         evidence: z.array(EvidenceIn).optional(),
         confidence: z.number().min(0).max(1).optional(),
+        resilience: ResilienceIn.optional(),
       },
       annotations: draftWrite
     },
@@ -495,6 +528,7 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
           evidence: evidenceOf(a.evidence),
           confidence: a.confidence ?? null,
           provenance: prov(),
+          resilience: resilienceOf(null, a.resilience) ?? null,
         })
         stage([...gov.ops, { op: 'addNode', node, at }])
         if (!placed) d.markUnplaced(id)
@@ -529,6 +563,7 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
         phase: z.string().nullable().optional().describe('Roadmap phase (id or name) in which this change lands'),
         evidence: z.array(EvidenceIn).optional().describe('Replaces the evidence list'),
         confidence: z.number().min(0).max(1).nullable().optional(),
+        resilience: ResilienceIn.optional(),
       },
       annotations: draftWrite
     },
@@ -559,6 +594,7 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
         set('tags', a.tags)
         set('evidence', a.evidence === undefined ? undefined : evidenceOf(a.evidence))
         set('confidence', a.confidence)
+        set('resilience', resilienceOf(cur.resilience, a.resilience))
         const gov = governance(a)
         for (const [k, v] of Object.entries(gov.fields)) set(k, v)
         if (Object.keys(patch).length === 0) return ok({ id, unchanged: true })
@@ -614,6 +650,7 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
         timeoutMs: z.number().min(0).optional(),
         retries: z.number().int().min(0).max(20).optional(),
         circuitBreaker: z.boolean().optional(),
+        dependency: z.enum(DEPENDENCIES).optional().describe('"soft" when the caller keeps working without it (fallback, cache, async); default "hard"'),
         evidence: z.array(EvidenceIn).optional(),
         confidence: z.number().min(0).max(1).optional(),
         ...ChannelIn,
@@ -649,6 +686,7 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
           description: a.description === undefined ? '' : scrub(a.description),
           status: a.status ?? 'existing',
           policies: { timeoutMs: a.timeoutMs ?? null, retries: a.retries ?? null, backoff: null, circuitBreaker: a.circuitBreaker ?? false },
+          dependency: a.dependency ?? 'hard',
           evidence: evidenceOf(a.evidence),
           confidence: a.confidence ?? null,
           provenance: prov(),
@@ -676,6 +714,7 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
         timeoutMs: z.number().min(0).nullable().optional(),
         retries: z.number().int().min(0).max(20).nullable().optional(),
         circuitBreaker: z.boolean().optional(),
+        dependency: z.enum(DEPENDENCIES).optional(),
         ...ChannelIn,
       },
       annotations: draftWrite
@@ -716,6 +755,7 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
         const gov = governance({ team: a.team, phase: a.phase, notes: a.notes })
         Object.assign(patch, gov.fields)
         if (a.sync !== undefined) patch['sync'] = a.sync
+        if (a.dependency !== undefined) patch['dependency'] = a.dependency
         if (a.label !== undefined) patch['label'] = a.label
         if (a.description !== undefined) patch['description'] = scrub(a.description)
         if (a.status !== undefined) patch['status'] = a.status
@@ -903,9 +943,35 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
       guard(() => {
         const before = new Set(lintModel(d.base).map((p) => `${p.code}|${p.nodeId ?? ''}|${p.connectorId ?? ''}`))
         const now = lintModel(d.model)
+        const haBefore = new Set(resilienceFindings(d.base).map((f) => `${f.kind}|${f.nodeId ?? ''}|${f.connectorId ?? ''}`))
         return ok({
           introducedByDraft: now.filter((p) => !before.has(`${p.code}|${p.nodeId ?? ''}|${p.connectorId ?? ''}`)),
           preExisting: now.length,
+          // Availability gaps on the request path (single points of failure, one-zone services, unprotected outside calls).
+          resilience: resilienceFindings(d.model)
+            .filter((f) => f.severity !== 'info')
+            .map((f) => ({ kind: f.kind, node: f.nodeId, connector: f.connectorId, message: f.message, fix: f.fix, new: !haBefore.has(`${f.kind}|${f.nodeId ?? ''}|${f.connectorId ?? ''}`) })),
+        })
+      }),
+  )
+
+  server.registerTool(
+    'check_traffic',
+    {
+      description:
+        'Simulated traffic in the draft: where requests from the entry points (or the nodes you name) get to, and every place they stop or cannot reach, with the reason and what to change (a dead end, a connector pointing the wrong way, a node nothing reaches, on-prem calling cloud without a network hop). Use it to verify links before submitting.',
+      inputSchema: { from: z.array(z.string()).max(50).optional().describe('Node ids to send traffic from (default: the entry points)') },
+      annotations: ro,
+    },
+    (a) =>
+      guard(() => {
+        const m = d.model
+        const sources = a.from !== undefined && a.from.length > 0 ? a.from.filter((id) => m.nodes[id] !== undefined) : entryNodes(m)
+        const r = reach(m, sources)
+        return ok({
+          from: sources.map((id) => `${m.nodes[id]?.name ?? id} (${id})`),
+          reached: [...r.nodes].map((id) => m.nodes[id]?.name ?? id),
+          stops: trafficBreaks(m, sources).map((b) => ({ kind: b.kind, node: b.nodeId, connector: b.connectorId, message: b.message, fix: b.hint })),
         })
       }),
   )

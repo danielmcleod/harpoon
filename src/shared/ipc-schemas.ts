@@ -101,6 +101,8 @@ export const REQUEST_SCHEMAS = {
   'project.forgetRecent': z.strictObject({ path: PathZ }),
   'ai.providers': z.strictObject({ force: optional(z.boolean()) }),
   'mcp.external.get': VoidZ,
+  'mcp.external.codexPlugin': z.strictObject({ install: z.boolean() }),
+  'mcp.addToEditor': z.strictObject({ editor: z.enum(['vscode', 'cursor']) }),
   'mcp.external.set': z.strictObject({ enabled: optional(z.boolean()), port: optional(z.number().int().min(1024).max(65535)), regenerate: optional(z.boolean()) }),
   'ai.start': z.strictObject({
     vendor: z.enum(AI_VENDORS),

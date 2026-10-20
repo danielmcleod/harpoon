@@ -30,6 +30,9 @@ export function TopBar(): React.JSX.Element {
   const aiOpen = useStore((s) => s.ui.aiOpen)
   const leftCollapsed = useStore((s) => s.ui.leftCollapsed)
   const rightCollapsed = useStore((s) => s.ui.rightCollapsed)
+  // In notes the right panel is the inspector beside the diagram, closed until asked for.
+  const inNotes = useStore((s) => s.ui.view === 'notes' && s.ui.mode !== 'sim')
+  const notesInspector = useStore((s) => s.ui.notesInspector)
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-panel px-3">
@@ -150,7 +153,7 @@ export function TopBar(): React.JSX.Element {
         <Button variant="ghost" size="icon" aria-label="Toggle left panel" onClick={() => setUi({ leftCollapsed: !leftCollapsed })}>
           <PanelLeft />
         </Button>
-        <Button variant="ghost" size="icon" aria-label="Toggle right panel" onClick={() => setUi({ rightCollapsed: !rightCollapsed })}>
+        <Button variant="ghost" size="icon" aria-label="Toggle right panel" onClick={() => setUi(inNotes ? { notesInspector: !notesInspector } : { rightCollapsed: !rightCollapsed })}>
           <PanelRight />
         </Button>
       </div>

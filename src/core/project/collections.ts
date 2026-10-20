@@ -26,7 +26,7 @@ export const ViewZ = z.object({
 
 const FaultZ = z.object({
   id: z.string(),
-  type: z.enum(['down', 'latency', 'partition', 'ratelimit', 'errors']),
+  type: z.enum(['down', 'latency', 'partition', 'ratelimit', 'errors', 'instance', 'zone', 'region']),
   target: z.string(),
   value: z.number(),
   from: z.number(),

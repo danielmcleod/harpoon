@@ -114,8 +114,10 @@ function Page({ topic }: { topic: HelpTopic }): React.JSX.Element {
             <>Click to select; the inspector on the right shows its details, features, contracts and connectors.</>,
             <>Double-click a service to expand it in place and see the parts inside. <Kbd combo={KEYS.focusNode} /> opens it on its own; <Kbd combo={KEYS.up} /> goes back up.</>,
             <><B>Modules</B> are responsibilities inside a service that need not connect to anything; they never count as unconnected.</>,
-            <>Lenses colour nodes by status, team, data class or roadmap phase. Blast radius dims everything not upstream or downstream of a node.</>,
-            <><B>Simulate</B> on the rail runs modelled traffic through the diagram, with faults and cascades. Its numbers are modelled, not measured.</>,
+            <>Lenses colour nodes by status, team, data class, roadmap phase or <B>resilience</B> (how much failure each survives; SPOF marks single points of failure). Show impact dims everything not upstream or downstream of a node, or shows what one instance, its zone or the whole node failing takes down.</>,
+            <><B>Simulate</B> on the rail runs modelled traffic through the diagram, with faults (including losing an instance, a zone or a region) and cascades. Its numbers are modelled, not measured.</>,
+            <><B>Where traffic stops</B> in the simulator lists dead ends, connectors that point the wrong way and missing network hops, with a marker on each node. <B>Investigate with AI</B> reads the code and infrastructure to find the real path and proposes fixes. Requests travel along connectors from caller to callee.</>,
+            <><B>Flows</B> (project panel) are request paths that Trace a flow follows. <B>Review flows with AI</B> fixes broken ones and adds the journeys that have none.</>,
             <><B>Present</B> steps through saved views full screen; use the arrow keys or Space, and Esc to stop.</>,
           ]}
         />
@@ -127,7 +129,7 @@ function Page({ topic }: { topic: HelpTopic }): React.JSX.Element {
             <><B>Tables</B> list services, connectors, endpoints, data, changes and problems, plus a dependency matrix. <B>Split</B> shows a table under the diagram.</>,
             <><B>Roadmap</B> groups planned work by phase (set phases in Project settings). Pick a phase to see the diagram as it will be.</>,
             <><B>Decisions</B> compares alternative solutions side by side and keeps a log of decision records.</>,
-            <><B>Notes</B> holds project and meeting notes as Markdown files, with action items collected in one list.</>,
+            <><B>Notes</B> holds project and meeting notes as Markdown files, with action items collected in one list. The live diagram sits beside the note: what the note @mentions is marked on it, clicking a mention shows that node, and selecting a node offers to mention it. Hide the diagram from the note&apos;s header; open the inspector with the right-panel button.</>,
           ]}
         />
       )
@@ -148,7 +150,8 @@ function Page({ topic }: { topic: HelpTopic }): React.JSX.Element {
           <P>Install and sign in to <B>Claude Code</B> (<code>claude</code>) or <B>Codex</B> (<code>codex</code>) first. The assistant shows which ones it found.</P>
           <P>
             Pick the model and effort at the top of the panel. Settings → <B>AI</B> keeps the defaults for this computer, checks your CLIs again (update a CLI to see newer
-            models, or type any model id), and can let an agent you run yourself use Harpoon&apos;s tools through MCP.
+            models, or type any model id), and can let an agent you run yourself use Harpoon&apos;s tools through MCP: install the plugin for Codex (CLI, desktop app and
+            IDE extension), add Harpoon to VS Code or Cursor, or copy the setup for Claude Code, Claude Desktop and other clients.
           </P>
           <P>
             <B>Import repo</B> with several linked repositories: untick the ones to skip and describe what to bring in, for example &quot;only checkout and payments; from

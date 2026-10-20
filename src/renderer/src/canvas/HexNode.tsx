@@ -17,7 +17,7 @@ import type { HexFlowNode } from './types.ts'
 
 export const DIFF_COLOR = { added: 'var(--hx-add)', modified: 'var(--hx-mod)', removed: 'var(--hx-del)' } as const
 export const HEALTH_COLOR = { ok: 'var(--hx-ok)', warn: 'var(--hx-warn)', bad: 'var(--hx-bad)' } as const
-export const IMPACT_COLOR = { affected: 'var(--hx-bad)', needed: 'var(--hx-blue)' } as const
+export const IMPACT_COLOR = { affected: 'var(--hx-bad)', needed: 'var(--hx-blue)', degraded: 'var(--hx-warn)' } as const
 export { STATUS_COLOR } from './lensMarks.ts'
 
 function dashFor(n: HexFlowNode['data']['node']): string | undefined {
@@ -102,6 +102,21 @@ function HexNodeImpl({ data, selected }: NodeProps<HexFlowNode>): React.JSX.Elem
         </div>
       )}
 
+      {data.mark !== null && !ghost && (
+        <span
+          className={cn(
+            'pointer-events-auto absolute flex h-[16px] items-center gap-0.5 rounded-full border px-1.5 text-[9.5px] font-semibold shadow-sm',
+            data.mark.tone === 'bad' ? 'border-destructive/60 bg-destructive text-white' : data.mark.tone === 'warn' ? 'border-warning/60 bg-warning text-black' : 'border-primary/60 bg-primary text-primary-foreground',
+          )}
+          style={{ left: box.center.x - r * 0.9, top: box.center.y - (style === 'flat' ? r * 0.95 : r * 0.6) }}
+          title={data.mark.title}
+          role="img"
+          aria-label={data.mark.title}
+        >
+          {data.mark.label}
+        </span>
+      )}
+
       {n.notes.trim() !== '' && !ghost && (
         <span
           className="pointer-events-auto absolute text-muted-foreground"
@@ -132,9 +147,19 @@ function HexNodeImpl({ data, selected }: NodeProps<HexFlowNode>): React.JSX.Elem
         <span
           className="pointer-events-none absolute rounded-full px-1.5 text-[9.5px] font-bold text-white shadow"
           style={{ left: box.center.x - 18, top: -10, background: impact.kind === 'origin' ? 'var(--primary)' : IMPACT_COLOR[impact.kind] }}
-          title={impact.kind === 'origin' ? 'Impact analysis starts here' : impact.kind === 'affected' ? `Breaks if the start fails (${impact.hop} hop${impact.hop === 1 ? '' : 's'} away)` : `Needed by the start (${impact.hop} hop${impact.hop === 1 ? '' : 's'} away)`}
+          title={
+            impact.kind === 'origin'
+              ? 'Impact analysis starts here'
+              : impact.kind === 'degraded'
+                ? 'Keeps working with less capacity or without a soft dependency'
+                : impact.kind === 'affected'
+                  ? impact.hop > 0
+                    ? `Breaks if the start fails (${impact.hop} hop${impact.hop === 1 ? '' : 's'} away)`
+                    : 'Goes down'
+                  : `Needed by the start (${impact.hop} hop${impact.hop === 1 ? '' : 's'} away)`
+          }
         >
-          {impact.kind === 'origin' ? 'start' : impact.kind === 'affected' ? `breaks · ${impact.hop}` : `needed · ${impact.hop}`}
+          {impact.kind === 'origin' ? 'start' : impact.kind === 'degraded' ? 'degraded' : impact.kind === 'affected' ? (impact.hop > 0 ? `breaks · ${impact.hop}` : 'down') : `needed · ${impact.hop}`}
         </span>
       )}
       {data.lens !== null && data.lens.label !== '' && (

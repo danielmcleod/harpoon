@@ -111,6 +111,14 @@ export interface ExternalMcpView {
   error: string | null
   /** When an outside agent last called a tool (ms since epoch). */
   lastCall: number | null
+  /** The stdio bridge for clients that run a command (`Harpoon --mcp`); null when not known (tests, dev CLI). */
+  bridge: { command: string; args: string[] } | null
+}
+
+/** Installing the Codex plugin: the marketplace folder written, and each CLI step's result. */
+export interface CodexPluginResult {
+  dir: string
+  steps: { command: string; ok: boolean; output: string }[]
 }
 
 export interface AppStatePatch {
@@ -194,8 +202,8 @@ export const AI_VENDORS = ['claude', 'codex'] as const satisfies readonly AiVend
  * plan: design a change · document: fill in details from code · explain: answer and highlight · import: map a repo ·
  * drift: diagram vs code · solutions: several alternative designs to compare · decision: draft a decision record.
  */
-export type AiMode = 'plan' | 'document' | 'explain' | 'import' | 'drift' | 'solutions' | 'decision' | 'scan' | 'notes' | 'publish'
-export const AI_MODES = ['plan', 'document', 'explain', 'import', 'drift', 'solutions', 'decision', 'scan', 'notes', 'publish'] as const satisfies readonly AiMode[]
+export type AiMode = 'plan' | 'document' | 'explain' | 'import' | 'drift' | 'solutions' | 'decision' | 'scan' | 'notes' | 'publish' | 'investigate' | 'flows' | 'resilience'
+export const AI_MODES = ['plan', 'document', 'explain', 'import', 'drift', 'solutions', 'decision', 'scan', 'notes', 'publish', 'investigate', 'flows', 'resilience'] as const satisfies readonly AiMode[]
 
 /** `.harpoon/publish.json`: where the project is published and what was written. */
 export interface PublishSettings {
@@ -541,7 +549,7 @@ export interface SavedScenario {
   name: string
   multiplier: number
   profile: 'constant' | 'ramp' | 'spike' | 'diurnal'
-  faults: { id: string; type: 'down' | 'latency' | 'partition' | 'ratelimit' | 'errors'; target: string; value: number; from: number; until: number | null }[]
+  faults: { id: string; type: 'down' | 'latency' | 'partition' | 'ratelimit' | 'errors' | 'instance' | 'zone' | 'region'; target: string; value: number; from: number; until: number | null }[]
 }
 
 export type ExportFormat =
@@ -625,6 +633,10 @@ export interface Commands {
   'mcp.external.get': { req: void; res: ExternalMcpView }
   /** Turn outside access on or off, move it to another port, or issue a new token (the old one stops working). */
   'mcp.external.set': { req: { enabled?: boolean; port?: number; regenerate?: boolean }; res: ExternalMcpView }
+  /** Write the Codex plugin (local marketplace); with install, also register it with the Codex CLI. */
+  'mcp.external.codexPlugin': { req: { install: boolean }; res: CodexPluginResult }
+  /** Open VS Code's or Cursor's "add MCP server" prompt for the stdio bridge (the link is built in main). */
+  'mcp.addToEditor': { req: { editor: 'vscode' | 'cursor' }; res: void }
   'ai.start': { req: AiStartRequest; res: AiRunView }
   'ai.send': { req: { runId: string; prompt: string }; res: AiRunView }
   'ai.cancel': { req: { runId: string }; res: void }
@@ -713,6 +725,8 @@ export const COMMAND_AREA = {
   'ai.providers': 'ai',
   'mcp.external.get': 'ai',
   'mcp.external.set': 'ai',
+  'mcp.external.codexPlugin': 'ai',
+  'mcp.addToEditor': 'ai',
   'ai.start': 'ai',
   'ai.send': 'ai',
   'ai.cancel': 'ai',

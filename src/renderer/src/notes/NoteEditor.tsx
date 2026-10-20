@@ -30,7 +30,20 @@ const theme = EditorView.theme({
   '.cm-placeholder': { color: 'var(--muted-foreground)' },
 })
 
-export function NoteEditor({ value, onChange, mentions, readOnly }: { value: string; onChange: (v: string) => void; mentions: () => MentionTarget[]; readOnly: boolean }): React.JSX.Element {
+export function NoteEditor({
+  value,
+  onChange,
+  mentions,
+  readOnly,
+  onInsertReady,
+}: {
+  value: string
+  onChange: (v: string) => void
+  mentions: () => MentionTarget[]
+  readOnly: boolean
+  /** Receives a function that inserts text at the cursor (null when the editor goes away). */
+  onInsertReady?: (insert: ((text: string) => void) | null) => void
+}): React.JSX.Element {
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
   const latest = useRef({ onChange, mentions })
@@ -71,7 +84,12 @@ export function NoteEditor({ value, onChange, mentions, readOnly }: { value: str
       }),
     })
     view.current = v
+    onInsertReady?.((text) => {
+      v.dispatch(v.state.replaceSelection(text))
+      v.focus()
+    })
     return () => {
+      onInsertReady?.(null)
       v.destroy()
       view.current = null
     }

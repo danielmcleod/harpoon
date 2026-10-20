@@ -33,6 +33,21 @@ export const MODE_INFO: Record<AiMode, { label: string; hint: string; placeholde
     hint: 'Describe what you need; get 2 to 4 alternative designs side by side, with pros, cons and scores, then pick one.',
     placeholder: 'e.g. We need fraud scoring on checkout without slowing payments down',
   },
+  flows: {
+    label: 'Review flows',
+    hint: 'Check, fix and complete the flows (request paths) from the code, and add the journeys that have none.',
+    placeholder: 'Optional focus, e.g. the checkout and refund journeys',
+  },
+  investigate: {
+    label: 'Investigate traffic',
+    hint: 'Find out why simulated traffic stops somewhere, from the code and infrastructure, and fix the links.',
+    placeholder: 'Where does traffic stop? e.g. nothing gets past the internal ALB',
+  },
+  resilience: {
+    label: 'Resilience review',
+    hint: 'Find single points of failure and missing failover, check the real deployment in the code, and propose fixes.',
+    placeholder: 'Optional focus, e.g. the payment path; plan fixes for phase 2',
+  },
   decision: { label: 'Decision record', hint: 'Write up a decision (started from a decision record).', placeholder: 'What should the record say?' },
   notes: { label: 'Notes', hint: 'Summaries, items and agendas (started from a note).', placeholder: 'What should it do with the note?' },
   publish: { label: 'Publish to Notion', hint: 'Write the architecture, roadmap and decisions to your Notion page (set it up in Project settings → Notion).', placeholder: 'Anything to add to the changelog?' },
@@ -44,7 +59,7 @@ export const MODE_INFO: Record<AiMode, { label: string; hint: string; placeholde
 }
 
 /** Modes offered as chips (a decision record is started from the record itself). */
-const CHIP_MODES: AiMode[] = ['plan', 'solutions', 'document', 'explain', 'import', 'drift', 'scan']
+const CHIP_MODES: AiMode[] = ['plan', 'solutions', 'document', 'explain', 'import', 'drift', 'flows', 'resilience', 'scan']
 
 export function AiPanel(): React.JSX.Element {
   const providers = useStore((s) => s.ai.providers)

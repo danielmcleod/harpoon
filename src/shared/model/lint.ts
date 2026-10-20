@@ -1,6 +1,7 @@
 // Architecture lint: problems worth a look (the Problems panel and the AI's validate_draft tool share it).
 import { arrivalRank, channelEncrypted, dataClassCatalog, dataClassLabel, dataScope, phasesInOrder } from './governance.ts'
-import { ancestorsOf, descendantIds } from './queries.ts'
+import { ancestorsOf, descendantIds, isSelfOrAncestor } from './queries.ts'
+import { entryNodes, reach, trafficBreaks } from '../sim/paths.ts'
 import { evaluateRules } from './rules.ts'
 import type { Model } from './schema.ts'
 
@@ -79,10 +80,47 @@ export function lintModel(m: Model): Problem[] {
       if (m.nodes[id] === undefined) out.push({ severity: 'error', code: 'boundary-missing-node', message: `Boundary ${b.name} lists a node that does not exist (${id}).`, boundaryId: b.id })
     }
   }
+  // Where traffic stops (shared with the simulator): the AI's validate_draft sees these while it builds.
+  const TRAFFIC: Record<string, { code: string; severity: Severity }> = {
+    'dead-end': { code: 'traffic-dead-end', severity: 'warn' },
+    reversed: { code: 'traffic-reversed', severity: 'warn' },
+    'never-reached': { code: 'traffic-unreached', severity: 'info' },
+    'missing-hop': { code: 'hybrid-no-hop', severity: 'info' },
+  }
+  for (const b of trafficBreaks(m)) {
+    const t = TRAFFIC[b.kind] ?? { code: `traffic-${b.kind}`, severity: 'info' as const }
+    out.push({ severity: t.severity, code: t.code, message: `${b.message} ${b.hint}`, nodeId: b.nodeId, ...(b.connectorId !== null ? { connectorId: b.connectorId } : {}) })
+  }
+
+  // Flows: each step must start somewhere the flow has already been (after a call returns, the caller makes the next
+  // one; an inner part and its container count as one place), run the way its connector carries traffic, and start
+  // somewhere traffic reaches.
+  const reached = reach(m, entryNodes(m)).nodes
+  const related = (a: string, b: string): boolean => isSelfOrAncestor(m, a, b) || isSelfOrAncestor(m, b, a)
   for (const f of Object.values(m.flows)) {
-    for (const st of f.steps) {
-      if (m.connectors[st.connectorId] === undefined) out.push({ severity: 'error', code: 'flow-missing-connector', message: `Flow ${f.name} uses a connector that does not exist (${st.connectorId}).`, flowId: f.id })
-    }
+    const visited: string[] = []
+    let prevTo: string | null = null
+    f.steps.forEach((st, i) => {
+      const c = m.connectors[st.connectorId]
+      if (c === undefined) {
+        out.push({ severity: 'error', code: 'flow-missing-connector', message: `Flow ${f.name} uses a connector that does not exist (${st.connectorId}).`, flowId: f.id })
+        prevTo = null
+        return
+      }
+      const from = st.direction === 'A' ? c.source : c.target
+      const to = st.direction === 'A' ? c.target : c.source
+      if (st.direction === 'B' && !c.duplex && c.channelB === null) {
+        out.push({ severity: 'warn', code: 'flow-reversed', message: `Flow ${f.name}, step ${i + 1}: runs from ${name(c.target)} back to ${name(c.source)}, but that connector only carries ${name(c.source)} → ${name(c.target)}. Reverse the step, or the connector if requests really go that way.`, flowId: f.id, connectorId: c.id })
+      }
+      if (prevTo !== null && !visited.some((v) => related(v, from))) {
+        out.push({ severity: 'warn', code: 'flow-gap', message: `Flow ${f.name}, step ${i + 1}: starts at ${name(from)}, but step ${i} ended at ${name(prevTo)}. Add the missing hop or reorder the steps.`, flowId: f.id })
+      }
+      if (i === 0 && reached.size > 0 && !reached.has(from)) {
+        out.push({ severity: 'info', code: 'flow-unreachable', message: `Flow ${f.name} starts at ${name(from)}, which no entry point's traffic reaches.`, flowId: f.id })
+      }
+      visited.push(from, to)
+      prevTo = to
+    })
   }
 
   // Synchronous call cycles between services (each hop waits on the next: a deadlock or latency trap).

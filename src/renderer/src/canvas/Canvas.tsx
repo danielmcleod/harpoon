@@ -4,6 +4,8 @@
 import { useRoadmap } from './RoadmapBar.tsx'
 import { dataScope } from '@shared/model/governance.ts'
 import { computeLens } from './lensMarks.ts'
+import { resilienceFindings } from '@shared/model/resilience.ts'
+import type { NodeMark } from './overlays.ts'
 import {
   Background,
   BackgroundVariant,
@@ -66,6 +68,17 @@ function CanvasInner({ overlays, children }: { overlays?: CanvasOverlays; childr
   const lensState = useStore((s) => s.ui.lens)
   const scope = useMemo(() => dataScope(model), [model])
   const lens = useMemo(() => (lensState === null ? null : { marks: computeLens(model, lensState.kind, scope).marks, hidden: new Set(lensState.hidden) }), [model, lensState, scope])
+  // Resilience lens: mark single points of failure (and one-zone services) on the request path.
+  const haMarks = useMemo(() => {
+    if (lensState?.kind !== 'resilience') return null
+    const out = new Map<string, NodeMark>()
+    for (const f of resilienceFindings(model)) {
+      if (f.nodeId === null || out.has(f.nodeId)) continue
+      if (f.kind === 'spof') out.set(f.nodeId, { label: 'SPOF', tone: 'bad', title: `${f.message} ${f.fix}` })
+      else if (f.kind === 'zone-risk') out.set(f.nodeId, { label: '1 zone', tone: 'warn', title: `${f.message} ${f.fix}` })
+    }
+    return out
+  }, [model, lensState])
   const style = useStore((s) => s.prefs.nodeStyle)
   const mode = useStore((s) => s.ui.mode)
   const selection = useStore((s) => s.ui.selection)
@@ -102,8 +115,9 @@ function CanvasInner({ overlays, children }: { overlays?: CanvasOverlays; childr
       emphasisConnectors: overlays?.emphasis ?? null,
       impact,
       lens,
+      marks: overlays?.marks ?? haMarks,
     })
-  }, [model, scene, style, editable, selection, highlight, overlays, review, roadmap, impact, lens])
+  }, [model, scene, style, editable, selection, highlight, overlays, review, roadmap, impact, lens, haMarks])
 
   // Local copy so dragging moves nodes smoothly; replaced whenever the scene changes.
   const [nodes, setNodes] = useState<AnyNode[]>(built.nodes)

@@ -11,6 +11,7 @@ import type { AddressInfo } from 'node:net'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { Logger } from '../log.ts'
+import { MCP_INSTRUCTIONS } from './agent-setup.ts'
 
 export const MCP_SERVER_NAME = 'harpoon'
 export const MCP_TOKEN_ENV = 'HARPOON_MCP_TOKEN'
@@ -105,7 +106,7 @@ export class McpHost {
       const body: unknown = text === '' ? undefined : JSON.parse(text)
       route.onCall?.()
 
-      const server = new McpServer({ name: MCP_SERVER_NAME, version: '1.0.0' })
+      const server = new McpServer({ name: MCP_SERVER_NAME, version: '1.0.0' }, { instructions: MCP_INSTRUCTIONS })
       route.register(server)
       // No session id generator: stateless (every request stands alone, which suits per-request servers).
       const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true })

@@ -22,6 +22,7 @@ export const MAIN_COMMANDS = [
   'notion.setToken',
   'notion.tokenStatus',
   'notion.attachBundle',
+  'mcp.addToEditor',
 ] as const satisfies readonly Cmd[]
 export type MainCmd = (typeof MAIN_COMMANDS)[number]
 

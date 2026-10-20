@@ -4,23 +4,27 @@
 //
 // Per tick:
 //  1. Entry load: nodes with `entryRps` (clients, schedulers) times the load profile and multiplier.
-//  2. Propagation along connectors in dependency order: calls = handled × fan-out; retries amplify calls by the
-//     callee's error rate; open circuit breakers and partitions stop calls (fast failures).
+//  2. Propagation along routes (paths.ts) in dependency order: connectors carry calls = handled × fan-out (retries
+//     amplify calls by the callee's error rate; open circuit breakers and partitions stop calls), and the hierarchy
+//     carries the rest (into a container's receiving parts, up from a part with no calls to its service's calls).
 //  3. Each service unit (a node with capacity, or the nearest ancestor that has one, else kind defaults) gets
 //     utilization, queueing latency (base / (1 − ρ), capped) and drops when overloaded.
 //  4. Errors flow back up synchronous links (a caller fails when a dependency it waits on fails or times out).
 //  5. Async links into a slower consumer pile up as backlog on the broker.
 import { ancestorsOf } from '../model/queries.ts'
-import type { HxConnector, HxNode, Model, NodeKind } from '../model/schema.ts'
+import { resilienceOf } from '../model/resilience.ts'
+import type { HxNode, Model, NodeKind } from '../model/schema.ts'
+import { entryNodes, routes } from './paths.ts'
+import type { Route } from './paths.ts'
 
 export const TICK_SEC = 0.25
 
-export type FaultType = 'down' | 'latency' | 'partition' | 'ratelimit' | 'errors'
+export type FaultType = 'down' | 'latency' | 'partition' | 'ratelimit' | 'errors' | 'instance' | 'zone' | 'region'
 
 export interface Fault {
   id: string
   type: FaultType
-  /** Node id (down, latency, ratelimit, errors) or connector id (partition). */
+  /** Node id (down, latency, ratelimit, errors, instance), connector id (partition), or a zone / region name. */
   target: string
   /** latency: multiplier; ratelimit: rps cap; errors: error rate 0..1. */
   value: number
@@ -152,12 +156,12 @@ function paramsOf(n: HxNode): UnitParams {
   }
 }
 
-/** Connectors in dependency order (Kahn's algorithm over nodes; cycles keep their remaining order). */
-function orderConnectors(m: Model): HxConnector[] {
-  const conns = Object.values(m.connectors)
+/** Routes in dependency order (Kahn's algorithm over nodes; cycles keep their remaining order). */
+function orderRoutes(m: Model): Route[] {
+  const rs = routes(m)
   const indeg = new Map<string, number>()
   for (const n of Object.keys(m.nodes)) indeg.set(n, 0)
-  for (const c of conns) indeg.set(c.target, (indeg.get(c.target) ?? 0) + 1)
+  for (const r of rs) indeg.set(r.to, (indeg.get(r.to) ?? 0) + 1)
   const queue = [...indeg.entries()].filter(([, d]) => d === 0).map(([n]) => n)
   const rank = new Map<string, number>()
   let i = 0
@@ -165,20 +169,20 @@ function orderConnectors(m: Model): HxConnector[] {
     const n = queue.shift()
     if (n === undefined) break
     rank.set(n, i++)
-    for (const c of conns) {
-      if (c.source !== n) continue
-      const d = (indeg.get(c.target) ?? 1) - 1
-      indeg.set(c.target, d)
-      if (d === 0) queue.push(c.target)
+    for (const r of rs) {
+      if (r.from !== n) continue
+      const d = (indeg.get(r.to) ?? 1) - 1
+      indeg.set(r.to, d)
+      if (d === 0) queue.push(r.to)
     }
   }
   for (const n of Object.keys(m.nodes)) if (!rank.has(n)) rank.set(n, i++)
-  return conns.sort((a, b) => (rank.get(a.source) ?? 0) - (rank.get(b.source) ?? 0))
+  return rs.sort((a, b) => (rank.get(a.from) ?? 0) - (rank.get(b.from) ?? 0))
 }
 
 export class Simulator {
   readonly #m: Model
-  readonly #order: HxConnector[]
+  readonly #order: Route[]
   readonly #unit = new Map<string, string>()
   readonly #params = new Map<string, UnitParams>()
   readonly #backlog = new Map<string, number>()
@@ -188,13 +192,32 @@ export class Simulator {
 
   constructor(m: Model) {
     this.#m = m
-    this.#order = orderConnectors(m)
+    this.#order = orderRoutes(m)
     for (const n of Object.values(m.nodes)) {
       const u = unitOf(m, n.id)
       this.#unit.set(n.id, u)
       const un = m.nodes[u]
       if (un !== undefined && !this.#params.has(u)) this.#params.set(u, paramsOf(un))
     }
+  }
+
+  /** Share of a unit's capacity left under instance, zone and region faults (resilience as documented). */
+  #survives(u: string, active: readonly Fault[]): number {
+    const r = resilienceOf(this.#m, u)
+    let left = 1
+    for (const f of active) {
+      if (f.type === 'instance' && f.target === u) {
+        const n = r?.instances ?? (r?.deployment === 'multi-instance' || r?.deployment === 'multi-zone' || r?.deployment === 'multi-region' ? 2 : 1)
+        left *= n <= 1 ? 0 : (n - 1) / n
+      } else if (f.type === 'zone' && r !== null && r.zones.includes(f.target)) {
+        left *= (r.zones.length - 1) / r.zones.length
+      } else if (f.type === 'region') {
+        const n = this.#m.nodes[u]
+        const region = n?.region ?? ancestorsOf(this.#m, u).find((a) => a.region !== null)?.region ?? null
+        if (region !== null && region.toLowerCase() === f.target.toLowerCase()) left *= r?.deployment === 'multi-region' ? 0.5 : 0
+      }
+    }
+    return left
   }
 
   get time(): number {
@@ -221,26 +244,18 @@ export class Simulator {
       if (from === null || (this.#unit.get(from) ?? from) !== u) unitLoad.set(u, (unitLoad.get(u) ?? 0) + rps)
     }
     const factor = profileFactor(sc.profile, t) * sc.multiplier
-    const entries: string[] = []
-    for (const n of Object.values(m.nodes)) {
-      const e = n.sim?.entryRps
-      if (e != null && e > 0) {
-        add(n.id, e * factor)
-        entries.push(n.id)
-      }
-    }
-    // Clients without explicit load still generate a little, so a fresh diagram animates.
-    if (entries.length === 0) {
-      for (const n of Object.values(m.nodes)) {
-        if (n.kind === 'client' || n.kind === 'frontend' || n.kind === 'mobile' || n.kind === 'desktop' || n.kind === 'device') {
-          add(n.id, 100 * factor)
-          entries.push(n.id)
-        }
-      }
-    }
+    // Entry load; clients without explicit load still generate a little, so a fresh diagram animates.
+    const entries = entryNodes(m)
+    for (const id of entries) add(id, (m.nodes[id]?.sim?.entryRps ?? 100) * factor)
 
     const edges: Record<string, EdgeFrame> = {}
-    for (const c of this.#order) {
+    for (const r of this.#order) {
+      const c = r.connector
+      if (c === undefined) {
+        // The hierarchy: the same request moves into an inner part or up to its service's calls.
+        add(r.to, (arrivals.get(r.from) ?? 0) * r.share, r.from)
+        continue
+      }
       const handled = arrivals.get(c.source) ?? 0
       let rps = handled * (c.sim?.fanout ?? 1)
       const br = this.#breaker.get(c.id) ?? { bad: 0, openUntil: -1 }
@@ -276,7 +291,10 @@ export class Simulator {
       let capacity = p.capacity
       const rl = fault('ratelimit', u)
       if (rl !== undefined) capacity = Math.min(capacity, rl.value)
-      const down = fault('down', u) !== undefined
+      // Losing an instance, a zone or a region: what is left of the unit's capacity (0: down).
+      const left = this.#survives(u, active)
+      capacity *= left
+      const down = fault('down', u) !== undefined || left <= 0
       const util = capacity <= 0 ? (load > 0 ? Infinity : 0) : load / capacity
       const slow = fault('latency', u)?.value ?? 1
       const latency = Math.min(p.latencyMs * LATENCY_CAP, p.latencyMs / Math.max(1 / LATENCY_CAP, 1 - Math.min(util, 0.999))) * slow
@@ -289,10 +307,19 @@ export class Simulator {
     // Errors flow back up synchronous links (reverse dependency order), and async backlog builds on brokers.
     const nodeErrNow = new Map<string, number>()
     for (const id of Object.keys(m.nodes)) nodeErrNow.set(id, unitFrame.get(this.#unit.get(id) ?? id)?.err ?? 0)
-    for (const c of [...this.#order].reverse()) {
+    for (const r of [...this.#order].reverse()) {
+      const c = r.connector
+      if (c === undefined) {
+        // An inner part's failure shows on its container (by its share); a service's failing calls on the part.
+        const from = nodeErrNow.get(r.from) ?? 0
+        const to = (nodeErrNow.get(r.to) ?? 0) * (r.kind === 'into' ? r.share : 1)
+        nodeErrNow.set(r.from, Math.min(1, 1 - (1 - from) * (1 - to)))
+        continue
+      }
       const e = edges[c.id]
       if (e === undefined) continue
-      if (c.sync === 'sync') {
+      // A soft dependency fails without failing its caller (fallback, cache).
+      if (c.sync === 'sync' && c.dependency !== 'soft') {
         const calleeErr = e.breakerOpen || e.rps === 0 ? e.errorRate : Math.max(e.errorRate, nodeErrNow.get(c.target) ?? 0)
         e.errorRate = calleeErr
         const share = Math.min(1, c.sim?.fanout ?? 1)
@@ -336,7 +363,7 @@ export class Simulator {
       seen.add(id)
       const own = nodes[id]?.latencyMs ?? 0
       let worst = 0
-      for (const c of Object.values(m.connectors)) if (c.source === id && c.sync === 'sync') worst = Math.max(worst, chain(c.target, depth + 1, seen))
+      for (const r of this.#order) if (r.from === id && (r.connector === undefined || r.connector.sync === 'sync')) worst = Math.max(worst, chain(r.to, depth + 1, seen))
       seen.delete(id)
       return own + worst
     }

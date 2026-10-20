@@ -177,6 +177,31 @@ export const NodeSimZ = z.object({
 })
 export type NodeSim = z.infer<typeof NodeSimZ>
 
+/** How a node is deployed for availability (all optional: unknown stays empty rather than looking resilient). */
+export const DEPLOYMENTS = ['single', 'multi-instance', 'multi-zone', 'multi-region'] as const
+export type Deployment = (typeof DEPLOYMENTS)[number]
+export const FAILOVERS = ['automatic', 'manual', 'none'] as const
+export const HA_MODES = ['active-active', 'active-passive'] as const
+export const ResilienceZ = z.object({
+  deployment: Nullable(z.enum(DEPLOYMENTS)),
+  /** Minimum running instances (replicas). */
+  instances: Nullable(z.number().int().min(0).max(100_000)),
+  /** Availability zones or data centres it runs in. */
+  zones: z.array(ShortText).max(20).default([]),
+  failover: Nullable(z.enum(FAILOVERS)),
+  mode: Nullable(z.enum(HA_MODES)),
+  autoscaling: Nullable(z.boolean()),
+  /** Data stores: backed up (and restorable). */
+  backups: Nullable(z.boolean()),
+  rpo: Nullable(ShortText),
+  rto: Nullable(ShortText),
+  notes: Nullable(Text(2000)),
+})
+export type Resilience = z.infer<typeof ResilienceZ>
+
+/** A hard dependency fails its caller when it fails; a soft one only degrades it (fallback, cache, async). */
+export const DEPENDENCIES = ['hard', 'soft'] as const
+
 const nodeShape = {
   id: IdZ,
   parentId: N(IdZ),
@@ -213,6 +238,7 @@ const nodeShape = {
   /** Fields an AI re-scan must never overwrite. */
   lockedFields: z.array(ShortText).max(50),
   sim: N(NodeSimZ),
+  resilience: N(ResilienceZ),
 }
 export const NodeZ = z.object(
   withDefaults(nodeShape, {
@@ -241,6 +267,7 @@ export const NodeZ = z.object(
     confidence: null,
     lockedFields: [],
     sim: null,
+    resilience: null,
   }),
 )
 export type HxNode = z.infer<typeof NodeZ>
@@ -296,6 +323,7 @@ const connectorShape = {
   team: N(IdZ),
   phase: N(IdZ),
   policies: PoliciesZ,
+  dependency: z.enum(DEPENDENCIES),
   status: z.enum(STATUSES),
   evidence: z.array(EvidenceZ).max(200),
   provenance: N(ProvenanceZ),
@@ -316,6 +344,7 @@ export const ConnectorZ = z.object(
     team: null,
     phase: null,
     policies: PoliciesZ.parse({}),
+    dependency: 'hard',
     status: 'existing',
     evidence: [],
     provenance: null,

@@ -9,9 +9,18 @@ interface NotesState {
   mentions: Record<string, { path: string; title: string }[]>
   /** Bumped when a note changed on disk (editors reload unless they have unsaved edits). */
   changed: { path: string | null; nonce: number }
+  /** Nodes the open note mentions (marked on the diagram beside it). */
+  mentioned: string[]
+  /** Insert text at the open note's cursor (null: no note being edited). */
+  insert: ((text: string) => void) | null
 }
 
-export const useNotes = create<NotesState>(() => ({ index: null, tasks: [], mentions: {}, changed: { path: null, nonce: 0 } }))
+export const useNotes = create<NotesState>(() => ({ index: null, tasks: [], mentions: {}, changed: { path: null, nonce: 0 }, mentioned: [], insert: null }))
+
+/** Node ids a note body mentions (`[@Name](harpoon:node/<id>)`). */
+export function mentionedNodes(body: string): string[] {
+  return [...new Set([...body.matchAll(/\(harpoon:node\/([^)\s]+)\)/g)].map((m) => decodeURIComponent(m[1] ?? '')).filter((x) => x !== ''))]
+}
 
 export async function loadNotes(): Promise<void> {
   const [idx, more] = await Promise.all([invoke('notes.list'), invoke('notes.index')])

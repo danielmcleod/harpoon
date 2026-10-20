@@ -1,5 +1,5 @@
 // Right-click menu for a node: expand/collapse, open inside, blast radius, status, duplicate, delete.
-import { Cable, Copy, Crosshair, Maximize2, Minimize2, PanelTopOpen, Sparkles, Trash2 } from 'lucide-react'
+import { Cable, Copy, Crosshair, Maximize2, Minimize2, PanelTopOpen, Route, Sparkles, Trash2 } from 'lucide-react'
 import { useEffect } from 'react'
 import { uniqueId } from '@shared/model/ids.ts'
 import { coordKey, nearestFreeCell } from '@shared/geometry/hex.ts'
@@ -9,6 +9,7 @@ import { isViewer } from '../lib/viewer.ts'
 import { deleteSelection } from '../panels/selectionOps.ts'
 import { edit, focus, select, startConnect, toggleExpanded } from '../state/actions.ts'
 import { getState, setUi } from '../state/store.ts'
+import { investigateTraffic } from '../sim/investigate.ts'
 
 export interface MenuState {
   x: number
@@ -90,6 +91,7 @@ export function NodeMenu({ menu, onClose }: { menu: MenuState; onClose: () => vo
           setUi({ aiOpen: true })
         })} />
       )}
+      {editable && <Item icon={<Route />} label="Investigate traffic with AI" onClick={run(() => investigateTraffic(n.id))} />}
       {editable && (
         <>
           <div className="my-1 h-px bg-border" />

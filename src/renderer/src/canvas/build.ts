@@ -3,9 +3,10 @@
 import type { Scene } from '@shared/geometry/scene.ts'
 import type { HexStyle } from '@shared/geometry/hex.ts'
 import type { ChangeSummary } from '@shared/model/diff.ts'
-import { pathLabel } from '@shared/model/queries.ts'
+import { ancestorsOf, pathLabel } from '@shared/model/queries.ts'
 import { BoundaryZ } from '@shared/model/schema.ts'
 import type { LensMark } from './lensMarks.ts'
+import type { NodeMark } from './overlays.ts'
 import type { Model } from '@shared/model/schema.ts'
 import { nodeBox } from './box.ts'
 import { badgeText } from './HarpoonEdge.tsx'
@@ -30,9 +31,10 @@ export interface BuildInput {
   health: ReadonlyMap<string, Health> | null
   edgeHealth: ReadonlyMap<string, Health> | null
   emphasisConnectors: ReadonlySet<string> | null
-  impact: ReadonlyMap<string, { hop: number; kind: 'origin' | 'affected' | 'needed' }> | null
+  impact: ReadonlyMap<string, { hop: number; kind: 'origin' | 'affected' | 'needed' | 'degraded' }> | null
   /** Lens on: each node's mark, and the legend keys hidden (a node whose keys are all hidden dims). */
   lens: { marks: ReadonlyMap<string, LensMark>; hidden: ReadonlySet<string> } | null
+  marks?: ReadonlyMap<string, NodeMark> | null
 }
 
 export function buildFlow(i: BuildInput): { nodes: (HexFlowNode | ZoneFlowNode)[]; edges: HarpoonFlowEdge[] } {
@@ -40,6 +42,14 @@ export function buildFlow(i: BuildInput): { nodes: (HexFlowNode | ZoneFlowNode)[
   const childCount = new Map<string, number>()
   for (const n of Object.values(m.nodes)) {
     if (n.parentId !== null) childCount.set(n.parentId, (childCount.get(n.parentId) ?? 0) + 1)
+  }
+  // Markers on hidden nodes show on the nearest drawn container.
+  const marks = new Map<string, NodeMark>()
+  for (const [id, mk] of i.marks ?? []) {
+    const at = scene.nodes.has(id) ? id : ancestorsOf(m, id).find((a) => scene.nodes.has(a.id))?.id
+    if (at === undefined) continue
+    const prev = marks.get(at)
+    if (prev === undefined || at === id) marks.set(at, at === id ? mk : { ...mk, title: `Inside: ${mk.title}` })
   }
   const diffKind = new Map<string, NonNullable<HexFlowNode['data']['diff']>>()
   const connDiff = new Map<string, NonNullable<HexFlowNode['data']['diff']>>()
@@ -119,6 +129,7 @@ export function buildFlow(i: BuildInput): { nodes: (HexFlowNode | ZoneFlowNode)[
         context: sn.ghost && n.parentId !== null ? pathLabel(m, n.parentId) : null,
         impact: i.impact?.get(id) ?? null,
         lens: i.lens?.marks.get(id) ?? null,
+        mark: marks.get(id) ?? null,
       },
     })
   }
