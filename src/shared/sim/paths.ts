@@ -151,10 +151,18 @@ export function trafficBreaks(m: Model, sources: readonly string[] = entryNodes(
     flagged.add(id)
   }
 
+  // One per node: the link back into a dead end is the likeliest to point the wrong way.
+  const reversed = new Map<string, HxConnector>()
   for (const c of conns) {
     if (!r.nodes.has(c.target) || r.nodes.has(c.source)) continue
     const s = m.nodes[c.source]
     if (s === undefined || hasIn.has(s.id) || ENTRY_KINDS.has(s.kind) || SINK_KINDS.has(s.kind) || (s.sim?.entryRps ?? 0) > 0) continue
+    const cur = reversed.get(s.id)
+    if (cur === undefined || (flagged.has(c.target) && !flagged.has(cur.target))) reversed.set(s.id, c)
+  }
+  for (const c of reversed.values()) {
+    const s = m.nodes[c.source]
+    if (s === undefined) continue
     out.push({
       kind: 'reversed',
       nodeId: s.id,
@@ -167,9 +175,10 @@ export function trafficBreaks(m: Model, sources: readonly string[] = entryNodes(
 
   for (const n of Object.values(m.nodes)) {
     if (!liveNode(n) || r.nodes.has(n.id) || flagged.has(n.id) || ENTRY_KINDS.has(n.kind) || n.kind === 'module' || n.kind === 'observability') continue
-    // Connected but never reached (orphans are the Problems panel's own check); a container counts as reached when
-    // traffic gets to something inside it.
-    if (!conns.some((c) => c.source === n.id || c.target === n.id)) continue
+    // Something is meant to call it but traffic never gets there. A node with only outgoing links starts its own work
+    // (a batch job, a replica pulling from its primary); orphans are the Problems panel's own check. A container
+    // counts as reached when traffic gets to something inside it.
+    if (!hasIn.has(n.id)) continue
     if (descendantIds(m, n.id).some((d) => r.nodes.has(d))) continue
     if (ancestorsOf(m, n.id).some((a) => flagged.has(a.id))) continue
     out.push({ kind: 'never-reached', nodeId: n.id, connectorId: null, message: `No traffic from the entry points reaches ${n.name}.`, hint: `Check that something on the way to ${n.name} connects to it in the direction requests travel, or that what calls it has entry load.` })

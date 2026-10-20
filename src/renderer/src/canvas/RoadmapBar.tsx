@@ -32,7 +32,8 @@ export function RoadmapBar(): React.JSX.Element | null {
   const counts = projection === null ? null : summaryCounts(projection.summary)
   const phase = phases.find((p) => p.id === asOf)
   return (
-    <Panel position="bottom-center">
+    // One row above the bottom-left tools and the bottom-right legend, so a narrow canvas never stacks them.
+    <Panel position="bottom-center" style={{ marginBottom: 56 }}>
       <div className="flex flex-col items-center gap-1">
         {phase !== undefined && counts !== null && (
           <div className="rounded-md border bg-popover/95 px-2.5 py-1 text-[11px] text-muted-foreground shadow-sm">

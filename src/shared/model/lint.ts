@@ -257,9 +257,14 @@ function governanceProblems(m: Model): Problem[] {
     }
     const phaseName = (i: number): string => order[i]?.name ?? 'today'
     for (const c of Object.values(m.connectors)) {
-      const s = m.nodes[c.source]
-      const t = m.nodes[c.target]
-      if (s === undefined || t === undefined) continue
+      const src = m.nodes[c.source]
+      const dst = m.nodes[c.target]
+      if (src === undefined || dst === undefined) continue
+      // Who depends on whom: the caller on the callee, but a consumer on the queue or stream it reads from (the
+      // arrow points at the consumer).
+      const consumer = c.sync === 'async' && (src.kind === 'queue' || src.kind === 'stream')
+      const s = consumer ? dst : src
+      const t = consumer ? src : dst
       const rs = arrivalRank(m, s, order)
       const rt = arrivalRank(m, t, order)
       const rc = arrivalRank(m, c, order)
@@ -270,7 +275,7 @@ function governanceProblems(m: Model): Problem[] {
           const r = arrivalRank(m, e, order)
           return r !== null && r > rc
         })
-        if (late !== undefined) out.push({ severity: 'error', code: 'phase-order', message: `${s.name} → ${t.name} is planned for ${phaseName(rc)}, before ${late.name} arrives.`, connectorId: c.id })
+        if (late !== undefined) out.push({ severity: 'error', code: 'phase-order', message: `${src.name} → ${dst.name} is planned for ${phaseName(rc)}, before ${late.name} arrives.`, connectorId: c.id })
       }
     }
   }
