@@ -1,7 +1,7 @@
 // The renderer's single zustand store: app prefs, the open project's model mirror, and UI state (mode, selection,
 // expanded nodes, focus). Mutations live in actions.ts; components read with selectors.
 import { create } from 'zustand'
-import type { AiMode, AiRunView, AiVendor, AppState, Proposal, ProjectView, ProviderView, ThemeState, ToastLevel } from '@shared/ipc.ts'
+import type { AiMode, AiRunView, AiVendor, AppState, UserTools, Proposal, ProjectView, ProviderView, ThemeState, ToastLevel } from '@shared/ipc.ts'
 import type { Op } from '@shared/model/ops.ts'
 import type { BlastDirection } from '@shared/model/queries.ts'
 import type { FailureScope } from '@shared/model/resilience.ts'
@@ -70,6 +70,10 @@ export interface AiState {
   effort: string | null
   /** Import: the linked repositories to read (null: all of them). */
   importRepos: string[] | null
+  /** The user's own MCP tools (Linear, GitHub…) the next message may use; none unless picked. */
+  tools: string[]
+  /** What each CLI offers (null: not asked yet). */
+  userTools: UserTools | null
   mode: AiMode
   runs: Record<string, AiRunView>
   activeRunId: string | null
@@ -106,6 +110,8 @@ export const INITIAL_AI: AiState = {
   model: null,
   effort: null,
   importRepos: null,
+  tools: [],
+  userTools: null,
   mode: 'plan',
   runs: {},
   activeRunId: null,

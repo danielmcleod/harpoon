@@ -6,7 +6,7 @@ import type { Mode } from '../../../shared/run.ts'
 import type { LocalPreset } from '../../../shared/vendors.ts'
 import type { StartStep } from '../types.ts'
 import { CLIENT_NAME, CLIENT_VERSION, LOCAL_PROVIDER_ID } from './capabilities.ts'
-import { ephemeralFor, localProviderConfig, sandboxFor } from './launch.ts'
+import { CODEX_APPS, ephemeralFor, localProviderConfig, sandboxFor } from './launch.ts'
 import { APPROVAL_DECISIONS, permissionsReply as protocolPermissionsReply } from './protocol.ts'
 import type {
   CollaborationMode,
@@ -17,6 +17,7 @@ import type {
   TurnStartParams,
 } from './wire.ts'
 import { rec } from './wire.ts'
+
 
 export { ELICITATION_CANCEL } from './protocol.ts'
 
@@ -56,7 +57,10 @@ function threadConfig(i: ThreadInput): Record<string, JsonValue> | undefined {
     // Only plain names make a safe dotted key (as in launch.ts); a name with dots or quotes would address another key.
     for (const other of i.mcp.disable ?? []) if (other !== i.mcp.name && !(i.mcp.allow ?? []).includes(other) && /^[A-Za-z0-9_-]+$/.test(other)) config[`mcp_servers.${other}.enabled`] = false
     // A user server the pass may use (publishing): its tools run without prompts too.
-    for (const s of i.mcp.allow ?? []) if (/^[A-Za-z0-9_-]+$/.test(s)) config[`mcp_servers.${s}.default_tools_approval_mode`] = 'approve'
+    for (const s of i.mcp.allow ?? []) if (s !== CODEX_APPS && /^[A-Za-z0-9_-]+$/.test(s)) config[`mcp_servers.${s}.default_tools_approval_mode`] = 'approve'
+    // The apps connected to the account (Linear, GitHub…) come through a built-in server that is not in config.toml:
+    // only the feature flag keeps them out, unless the user allowed them for this conversation.
+    if (!(i.mcp.allow ?? []).includes(CODEX_APPS)) config['features.apps'] = false
   }
   return Object.keys(config).length > 0 ? config : undefined
 }

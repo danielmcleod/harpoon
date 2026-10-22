@@ -54,13 +54,13 @@ describe('Notion', () => {
     const base = { route: 'readonly' as const, mode: 'readonly' as const, step: 'design' as const }
     const strict = buildArgv({ ...base, mcp: { name: 'harpoon', configFile: 'm.json' } })
     expect(strict).toContain('--strict-mcp-config')
-    const pub = buildArgv({ ...base, mcp: { name: 'harpoon', configFile: 'm.json', allow: ['claude.ai Notion'] } })
+    const pub = buildArgv({ ...base, mcp: { name: 'harpoon', configFile: 'm.json', allow: ['claude.ai Notion'], readCode: false } })
     expect(pub).not.toContain('--strict-mcp-config')
     expect(pub[pub.indexOf('--allowedTools') + 1]).toBe('mcp__harpoon__*,mcp__claude_ai_Notion__*')
     // Design passes: user settings only (never the repository's), and only code-reading built-in tools.
     expect(strict[strict.indexOf('--setting-sources') + 1]).toBe('user')
     expect(strict[strict.indexOf('--tools') + 1]).toBe('Read,Glob,Grep')
-    // Publishing: no built-in tools; a Notion server from the user's config is copied into the run's file, so
+    // Publishing (the runner passes readCode: false): no built-in tools; a Notion server from the user's config is
     // the pass stays strict.
     expect(pub[pub.indexOf('--tools') + 1]).toBe('')
     const fileServer = buildArgv({ ...base, mcp: { name: 'harpoon', configFile: 'm.json', allow: ['notion'] } })

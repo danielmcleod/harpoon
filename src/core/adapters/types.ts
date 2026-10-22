@@ -44,8 +44,10 @@ export interface McpAttach {
   configFile: string
   /** Codex: the user's own MCP servers, switched off for the pass. */
   disable?: string[]
-  /** The user's own servers this pass may use too (publishing to Notion); others stay off. */
+  /** The user's own servers this pass may use too (publishing to Notion, or tools picked for a conversation). */
   allow?: string[]
+  /** Claude: keep the read-only code tools alongside allowed servers (publishing turns them off). Default true. */
+  readCode?: boolean
 }
 
 export type StopReason = 'user' | 'timeout' | 'shutdown'

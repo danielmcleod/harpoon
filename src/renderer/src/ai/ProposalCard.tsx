@@ -89,6 +89,11 @@ export function ProposalCard({ proposal: p }: { proposal: Proposal }): React.JSX
             </span>
           )}
         </div>
+        {p.status === 'accepted' && (
+          <p className="mt-1.5 text-[11px] text-muted-foreground">
+            Follow up below, for example “write an implementation brief” or, with <strong className="font-medium text-foreground">Tools</strong> turned on, “create a Linear issue for this plan”.
+          </p>
+        )}
         <div className="mt-1.5 flex gap-3 text-[11px]">
           <span className="text-hx-add">+{counts.add} added</span>
           <span className="text-hx-mod">~{counts.change} changed</span>

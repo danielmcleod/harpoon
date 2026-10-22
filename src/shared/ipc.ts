@@ -115,6 +115,21 @@ export interface ExternalMcpView {
   bridge: { command: string; args: string[] } | null
 }
 
+/** One of the user's own MCP tools a conversation may use (a server, a claude.ai connector, Codex's apps). */
+export interface UserTool {
+  /** As the CLI names it (`linear`, `claude.ai Linear`, `codex_apps`). */
+  name: string
+  label: string
+  kind: 'server' | 'connector' | 'apps'
+  /** Connected and working, as far as the CLI says. */
+  ok: boolean
+}
+
+export interface UserTools {
+  claude: UserTool[]
+  codex: UserTool[]
+}
+
 /** Installing the Codex plugin: the marketplace folder written, and each CLI step's result. */
 export interface CodexPluginResult {
   dir: string
@@ -271,6 +286,8 @@ export interface AiStartRequest {
   vendor: AiVendor
   model?: string | null
   effort?: string | null
+  /** The user's own MCP tools (servers, connectors) this conversation may use. */
+  tools?: string[]
   mode: AiMode
   prompt: string
   selection: AiSelection
@@ -315,6 +332,8 @@ export interface AiRunView {
   effort: string | null
   /** Driven by an outside agent over MCP (no CLI of Harpoon's own). */
   external: boolean
+  /** The user's own MCP tools this conversation may use. */
+  tools: string[]
   mode: AiMode
   status: AiRunStatus
   title: string
@@ -638,7 +657,10 @@ export interface Commands {
   /** Open VS Code's or Cursor's "add MCP server" prompt for the stdio bridge (the link is built in main). */
   'mcp.addToEditor': { req: { editor: 'vscode' | 'cursor' }; res: void }
   'ai.start': { req: AiStartRequest; res: AiRunView }
-  'ai.send': { req: { runId: string; prompt: string }; res: AiRunView }
+  /** `tools`: the user's own MCP tools this conversation may use from now on (absent: keep the run's). */
+  'ai.send': { req: { runId: string; prompt: string; tools?: string[] }; res: AiRunView }
+  /** The user's own MCP servers and connectors each CLI has (`force`: ask the CLIs again). */
+  'ai.tools': { req: { force?: boolean }; res: UserTools }
   'ai.cancel': { req: { runId: string }; res: void }
   'ai.runs': { req: void; res: AiRunView[] }
   'proposal.list': { req: void; res: Proposal[] }
@@ -729,6 +751,7 @@ export const COMMAND_AREA = {
   'mcp.addToEditor': 'ai',
   'ai.start': 'ai',
   'ai.send': 'ai',
+  'ai.tools': 'ai',
   'ai.cancel': 'ai',
   'ai.runs': 'ai',
   'proposal.list': 'ai',

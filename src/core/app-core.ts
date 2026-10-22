@@ -15,6 +15,7 @@ import type { Logger } from './log.ts'
 import { ProjectManager } from './project/manager.ts'
 import { McpHost } from './ai/mcp-host.ts'
 import { ExternalMcp } from './ai/external.ts'
+import { listUserTools } from './ai/user-tools.ts'
 import { installCodexPlugin, writeCodexMarketplace } from './ai/agent-setup.ts'
 import type { BridgeCommand } from './ai/agent-setup.ts'
 import { ProposalStore } from './ai/proposals.ts'
@@ -98,7 +99,8 @@ export async function createCore(o: CoreOptions): Promise<Core> {
       return r.install ? installCodexPlugin(paths.home, o.bridge) : { dir: await writeCodexMarketplace(paths.home, o.bridge), steps: [] }
     },
     'ai.start': (r) => ai.start(r),
-    'ai.send': (r) => ai.send(r.runId, r.prompt),
+    'ai.send': (r) => ai.send(r.runId, r.prompt, r.tools),
+    'ai.tools': (r) => listUserTools(r.force === true),
     'ai.cancel': (r) => Promise.resolve(ai.cancel(r.runId)),
     'ai.runs': () => Promise.resolve(ai.list()),
     'proposal.list': () => Promise.resolve(proposals.list()),

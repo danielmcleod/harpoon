@@ -14,6 +14,9 @@ import {
 } from './capabilities.ts'
 import type { SandboxMode } from './wire.ts'
 
+/** Codex's built-in server for the apps connected to the account (it is not in config.toml). */
+export const CODEX_APPS = 'codex_apps'
+
 // ---- extraArgs / flagMap ----------------------------------------------------------------------------------------
 
 const flagName = (arg: string): string =>
@@ -240,7 +243,8 @@ export function execArgv(i: ExecArgvInput): string[] {
     a.push('-c', `${k}.bearer_token_env_var=${tomlString(i.mcp.tokenEnv)}`)
     a.push('-c', `${k}.default_tools_approval_mode=${tomlString('approve')}`)
     for (const other of i.mcp.disable ?? []) if (other !== i.mcp.name && !(i.mcp.allow ?? []).includes(other) && /^[A-Za-z0-9_-]+$/.test(other)) a.push('-c', `mcp_servers.${other}.enabled=false`)
-    for (const s of i.mcp.allow ?? []) if (/^[A-Za-z0-9_-]+$/.test(s)) a.push('-c', `mcp_servers.${s}.default_tools_approval_mode=${tomlString('approve')}`)
+    for (const s of i.mcp.allow ?? []) if (s !== CODEX_APPS && /^[A-Za-z0-9_-]+$/.test(s)) a.push('-c', `mcp_servers.${s}.default_tools_approval_mode=${tomlString('approve')}`)
+    if (!(i.mcp.allow ?? []).includes(CODEX_APPS)) a.push('-c', 'features.apps=false')
   }
   if (i.schemaFile !== undefined) a.push('--output-schema', i.schemaFile)
   if (ephemeralFor(i.step) && i.resumeId === undefined) a.push('--ephemeral')

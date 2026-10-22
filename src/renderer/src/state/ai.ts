@@ -16,9 +16,16 @@ export async function loadProviders(force = false): Promise<void> {
   })
 }
 
-/** Switch the panel's CLI; its model and effort go back to that CLI's saved defaults. */
+/** Switch the panel's CLI; its model and effort go back to that CLI's saved defaults (its tools are its own). */
 export function setVendor(vendor: AiVendor): void {
-  setAi(pickFor(vendor, getState().prefs))
+  setAi({ ...pickFor(vendor, getState().prefs), tools: [] })
+}
+
+/** Ask the CLIs which MCP servers and connectors they have. */
+export async function loadUserTools(force = false): Promise<void> {
+  const r = await invoke('ai.tools', { force })
+  if (!r.ok) return toast(r.error.message, 'error')
+  setAi({ userTools: r.value })
 }
 
 export function setAiMode(mode: AiMode): void {
@@ -39,7 +46,7 @@ export async function ask(prompt: string, o: { fresh?: boolean; mode?: AiMode; c
   const ai = getState().ai
   const active = ai.activeRunId !== null ? ai.runs[ai.activeRunId] : undefined
   if (o.fresh !== true && active !== undefined && (active.status === 'done' || active.status === 'failed' || active.status === 'cancelled') && o.mode === undefined) {
-    const r = await invoke('ai.send', { runId: active.id, prompt })
+    const r = await invoke('ai.send', { runId: active.id, prompt, tools: ai.tools })
     if (!r.ok) toast(r.error.message, 'error')
     return
   }
@@ -47,7 +54,7 @@ export async function ask(prompt: string, o: { fresh?: boolean; mode?: AiMode; c
   // Import: the repositories picked in the panel (none picked means all of them).
   const repoIds = mode === 'import' && ai.importRepos !== null && ai.importRepos.length > 0 ? ai.importRepos : undefined
   const context: AiContext | undefined = repoIds !== undefined ? { ...o.context, repoIds } : o.context
-  const r = await invoke('ai.start', { vendor: ai.vendor, model: ai.model, effort: ai.effort, mode, prompt, selection: selection(), ...(context !== undefined ? { context } : {}) })
+  const r = await invoke('ai.start', { vendor: ai.vendor, model: ai.model, effort: ai.effort, tools: ai.tools, mode, prompt, selection: selection(), ...(context !== undefined ? { context } : {}) })
   if (!r.ok) return toast(r.error.message, 'error')
   setAi((s) => ({ activeRunId: r.value.id, runs: { ...s.runs, [r.value.id]: r.value }, review: { kind: 'draft', runId: r.value.id }, excluded: {} }))
   setUi({ aiOpen: true })

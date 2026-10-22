@@ -146,6 +146,11 @@ function Page({ topic }: { topic: HelpTopic }): React.JSX.Element {
               <><B>Scan for patterns</B> (Rules) suggests rules from the code&apos;s conventions; notes, decision records and Notion publishing use it too.</>,
             ]}
           />
+          <P>
+            Keep talking after a run: the box below the conversation follows up in the same session, so the AI remembers the plan you accepted. <B>Tools</B> beside it lets
+            that conversation use some of your own MCP servers or connectors (Linear, GitHub, Jira…), for example &quot;create a Linear issue for this plan&quot;. They are off unless
+            you tick them, and the AI acts in them under your account.
+          </P>
           <P>The CLI runs read-only in the project folder: it can read the code but never edits files. It changes the diagram only through Harpoon&apos;s own tools, into a draft you accept or discard. Select nodes first to narrow what it looks at.</P>
           <P>Install and sign in to <B>Claude Code</B> (<code>claude</code>) or <B>Codex</B> (<code>codex</code>) first. The assistant shows which ones it found.</P>
           <P>

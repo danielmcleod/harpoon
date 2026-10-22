@@ -65,7 +65,7 @@ export interface ArgvInput {
    */
   webDomains?: readonly string[] | undefined
   /** `design` step: Harpoon's MCP server (its config file and the server name for the allow rule), plus user servers it may also use. */
-  mcp?: { name: string; configFile: string; allow?: string[] | undefined } | undefined
+  mcp?: { name: string; configFile: string; allow?: string[] | undefined; readCode?: boolean | undefined } | undefined
   /** `design` step: more folders it may read (`--add-dir`). */
   readDirs?: readonly string[] | undefined
 }
@@ -183,7 +183,7 @@ export function buildArgv(i: ArgvInput): string[] {
         // Never the repository's own .claude settings (helpers it runs, allow rules, extra folders): user only.
         a.push('--setting-sources', 'user')
         // Built-in tools: reading code only; a publish pass gets none (Harpoon's and Notion's tools are all it needs).
-        a.push('--tools', userServers.length > 0 ? '' : DESIGN_TOOLS.join(','))
+        a.push('--tools', i.mcp?.readCode === false ? '' : DESIGN_TOOLS.join(','))
         if (i.resumeId !== undefined) a.push(`--resume=${i.resumeId}`)
         else if (i.sessionId !== undefined) a.push(`--session-id=${i.sessionId}`)
         if (i.mcp !== undefined) a.push('--mcp-config', i.mcp.configFile, '--allowedTools', [`mcp__${i.mcp.name}__*`, ...userServers.map((s) => `mcp__${s.replace(/[^A-Za-z0-9_-]/g, '_')}__*`)].join(','))

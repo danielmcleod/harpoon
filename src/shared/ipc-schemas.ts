@@ -32,6 +32,8 @@ export const optional = <T extends z.ZodType>(t: T): z.ZodExactOptional<T> => t.
 const VoidZ = z.undefined()
 /** A model id or alias as the CLIs take them (claude-opus-5-5, opus, gpt-6-luna, sonnet[1m]). */
 const ModelIdZ = z.string().trim().min(1).max(200).regex(/^[A-Za-z0-9._:/@[\]-]+$/, 'Not a model id')
+/** An MCP server or connector name as the CLIs show them (`linear`, `claude.ai Linear`). */
+const ToolNameZ = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,99}$/, 'Not a tool name')
 const EffortZ = z.string().regex(/^[a-z]{1,20}$/, 'Not an effort level')
 const EXPORT_FORMATS = ['harpoon-json', 'interchange-json', 'json-schema', 'mermaid', 'mermaid-sequence', 'plantuml', 'drawio', 'svg', 'markdown', 'brief'] as const satisfies readonly ExportFormat[]
 const ExportViewZ = z.strictObject({
@@ -108,6 +110,7 @@ export const REQUEST_SCHEMAS = {
     vendor: z.enum(AI_VENDORS),
     model: optional(ModelIdZ.nullable()),
     effort: optional(EffortZ.nullable()),
+    tools: optional(z.array(ToolNameZ).max(20)),
     mode: z.enum(AI_MODES),
     prompt: z.string().max(PROMPT_MAX),
     selection: z.strictObject({
@@ -126,7 +129,8 @@ export const REQUEST_SCHEMAS = {
       }),
     ),
   }),
-  'ai.send': z.strictObject({ runId: z.string().max(ID_MAX), prompt: z.string().min(1).max(PROMPT_MAX) }),
+  'ai.send': z.strictObject({ runId: z.string().max(ID_MAX), prompt: z.string().min(1).max(PROMPT_MAX), tools: optional(z.array(ToolNameZ).max(20)) }),
+  'ai.tools': z.strictObject({ force: optional(z.boolean()) }),
   'ai.cancel': z.strictObject({ runId: z.string().max(ID_MAX) }),
   'ai.runs': VoidZ,
   'proposal.list': VoidZ,

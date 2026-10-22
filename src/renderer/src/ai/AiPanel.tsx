@@ -10,12 +10,13 @@ import type { AiMode, AiRunView } from '@shared/ipc.ts'
 import { Button } from '../components/ui/Button.tsx'
 import { cn } from '../lib/cn.ts'
 import { ask, cancelRun, loadProviders, newConversation, setAiMode, setVendor } from '../state/ai.ts'
-import { setAi, setUi, useStore } from '../state/store.ts'
+import { getState, setAi, setUi, useStore } from '../state/store.ts'
 import { Markdown } from './Markdown.tsx'
 import { ProposalCard } from './ProposalCard.tsx'
 import { QuestionCard } from './QuestionCard.tsx'
 import { AI_NOTE_SHORT, AiNote } from './AiNote.tsx'
 import { ModelPicker } from './ModelPicker.tsx'
+import { ToolsPicker } from './ToolsPicker.tsx'
 import { useModel } from '../canvas/useScene.ts'
 
 export const MODE_INFO: Record<AiMode, { label: string; hint: string; placeholder: string }> = {
@@ -82,6 +83,12 @@ export function AiPanel(): React.JSX.Element {
   const [text, setText] = useState('')
   const [showHistory, setShowHistory] = useState(false)
   const run = activeId !== null ? runs[activeId] : undefined
+  // Opening a conversation shows (and keeps using) the tools it had.
+  const runId = run?.id
+  useEffect(() => {
+    if (runId === undefined) return
+    setAi({ tools: getState().ai.runs[runId]?.tools ?? [] })
+  }, [runId])
   const busy = run !== undefined && (run.status === 'running' || run.status === 'starting')
   const provider = providers?.find((p) => p.id === vendor)
 
@@ -219,6 +226,7 @@ export function AiPanel(): React.JSX.Element {
             className="block w-full resize-none bg-transparent px-2.5 py-2 text-xs outline-none"
           />
           <div className="flex items-center gap-2 px-2 pb-1.5">
+            <ToolsPicker disabled={mode === 'publish'} />
             <span className="min-w-0 flex-1 truncate text-[10.5px] text-muted-foreground" title="Scope: the selection or focused node is sent as context">
               Scope: {scope}
             </span>

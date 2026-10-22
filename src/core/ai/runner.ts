@@ -38,6 +38,7 @@ import type { ToolContext } from './tools.ts'
 import { userCodexMcpServers } from './codex-isolation.ts'
 import { applySeed } from '../ingest/apply-seed.ts'
 import { seedRepository } from '../ingest/seed.ts'
+import { checkUserTools } from './user-tools.ts'
 
 interface OptionState {
   key: string
@@ -99,6 +100,14 @@ export interface AiRunnerDeps {
   notionServer: (projectId: string) => string | null
 }
 
+/** For the prompt: the user's own tools this conversation has, and what they are for. */
+export function toolsNote(mode: string, tools: readonly string[]): string {
+  if (mode === 'publish' || tools.length === 0) return ''
+  return `
+
+(For this conversation the user also turned on these of their own tools: ${tools.join(', ')}. Use them when the request calls for it, for example to create or update an issue, ticket or page about the plan, acting under the user's account. Put the plan's substance into what you create. Do not use them for anything the user did not ask, and never send secrets or credentials through them. Changes to the architecture still go through Harpoon's tools.)`
+}
+
 /** For the prompt: which repos the agent can read and how to cite files in them. */
 export function repoBrief(root: string, repos: readonly { id: string; name: string; role: string; path: string }[]): string {
   if (repos.length === 0) return ''
@@ -131,6 +140,10 @@ export class AiRunner {
       if (picked !== null && !picked.has(r.id)) return []
       return r.path === null || ref === undefined ? [] : [{ id: r.id, name: ref.name, role: ref.role, path: r.path }]
     })
+    // The user's own tools picked for this conversation (Linear, GitHub…), checked against what the CLI has.
+    const tools = req.mode === 'publish' ? [] : await checkUserTools(req.vendor, req.tools ?? []).catch((err: unknown) => {
+      throw new HarpoonError('VALIDATION', err instanceof Error ? err.message : String(err))
+    })
     const id = newRequestId('ai')
     const state: RunState = {
       view: {
@@ -139,6 +152,7 @@ export class AiRunner {
         model: req.model ?? null,
         effort: req.effort ?? null,
         external: false,
+        tools,
         mode: req.mode,
         status: 'starting',
         title: req.prompt.trim().split('\n')[0]?.slice(0, 80) || defaultTitle(req.mode),
@@ -180,6 +194,7 @@ export class AiRunner {
       emitTimer: null,
       draftTimer: null,
     }
+    if (tools.length > 0) state.allowServers = tools
     if (req.mode === 'publish') {
       // Publishing writes outside the machine, so it runs with Claude, whose tools can be limited to Harpoon's and
       // Notion's (Codex can still read the disk through its shell).
@@ -257,6 +272,7 @@ export class AiRunner {
         model: null,
         effort: null,
         external: true,
+        tools: [],
         mode: 'plan',
         status: 'running',
         title: 'Outside agent',
@@ -323,10 +339,19 @@ export class AiRunner {
     this.#emit(s, true)
   }
 
-  send(runId: string, prompt: string): Promise<AiRunView> {
+  async send(runId: string, prompt: string, tools?: string[]): Promise<AiRunView> {
     const s = this.#runs.get(runId)
     if (s === undefined) throw new HarpoonError('NOT_FOUND', 'That conversation is gone.')
     if (s.view.status === 'running' || s.view.status === 'starting') throw new HarpoonError('CONFLICT', 'Wait for the current answer first.')
+    // A follow-up may bring tools the conversation did not have (accept a plan, then "create a Linear issue for it").
+    if (tools !== undefined && s.view.mode !== 'publish') {
+      const checked = await checkUserTools(s.view.vendor, tools).catch((err: unknown) => {
+        throw new HarpoonError('VALIDATION', err instanceof Error ? err.message : String(err))
+      })
+      s.view.tools = checked
+      if (checked.length > 0) s.allowServers = checked
+      else delete s.allowServers
+    }
     // After an accepted or discarded proposal, follow-ups start from the model as it is now.
     const pid = s.view.proposalId
     const p = pid === null ? undefined : this.#o.proposals.get(pid)
@@ -348,7 +373,7 @@ export class AiRunner {
 (Options so far: ${s.options.map((o) => `${o.key} "${o.title}"`).join(', ')}. Use select_option before editing one, then submit_solutions again.)`
         : ''
     void this.#job(s, prompt.trim() + reminder, s.sessionId !== undefined)
-    return Promise.resolve(s.view)
+    return s.view
   }
 
   cancel(runId: string): void {
@@ -521,10 +546,12 @@ export class AiRunner {
     // The token is not in this file: Claude expands ${HARPOON_MCP_TOKEN} from the child's environment. A publish pass
     // also gets the chosen Notion server, copied from the user's config, so the CLI can stay on this file alone.
     const servers: Record<string, unknown> = { [MCP_SERVER_NAME]: { type: 'http', url: route.url, headers: { Authorization: `Bearer \${${MCP_TOKEN_ENV}}` } } }
-    for (const name of s.allowServers ?? []) {
+    // Claude reads servers from this file only (strict), so the user's servers picked for the run are copied in. Codex
+    // switches its own servers on or off by name instead (launch.ts).
+    for (const name of v.vendor === 'claude' ? (s.allowServers ?? []) : []) {
       if (isClaudeAiConnector(name)) continue
       const cfg = await claudeUserServer(name)
-      if (cfg === null) throw new HarpoonError('VALIDATION', `"${name}" is not a user-level MCP server in ~/.claude.json; add it with "claude mcp add --scope user", or use the claude.ai Notion connector.`)
+      if (cfg === null) throw new HarpoonError('VALIDATION', `"${name}" is not a user-level MCP server in ~/.claude.json; add it with "claude mcp add --scope user", or use a claude.ai connector.`)
       servers[name] = cfg
     }
     await writeFile(s.configFile, JSON.stringify({ mcpServers: servers }), { mode: 0o600 })
@@ -621,7 +648,7 @@ export class AiRunner {
       step: 'design',
       cwd: s.cwd,
       readDirs: s.repos.map((r) => r.path).filter((p) => resolve(p) !== resolve(s.cwd)),
-      prompt: o.prompt,
+      prompt: o.prompt + toolsNote(v.mode, v.tools),
       ...(o.resume ? {} : { systemAppend: SYSTEM_BRIEF }),
       model: v.model,
       effort: v.effort,
@@ -638,6 +665,7 @@ export class AiRunner {
         configFile,
         ...(v.vendor === 'codex' ? { disable: userCodexMcpServers() } : {}),
         ...(s.allowServers !== undefined ? { allow: s.allowServers } : {}),
+        readCode: v.mode !== 'publish',
       },
       env: { [MCP_TOKEN_ENV]: route.token },
       ...(o.resume && s.sessionId !== undefined ? { resume: { sessionId: s.sessionId } } : {}),
