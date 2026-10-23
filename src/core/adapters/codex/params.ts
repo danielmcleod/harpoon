@@ -17,6 +17,7 @@ import type {
   TurnStartParams,
 } from './wire.ts'
 import { rec } from './wire.ts'
+import type { Approvals } from '../../../shared/run.ts'
 
 
 export { ELICITATION_CANCEL } from './protocol.ts'
@@ -32,6 +33,7 @@ export function initializeParams(experimentalApi: boolean): InitializeParams {
 export interface ThreadInput {
   step: StartStep
   mode: Mode
+  approvals?: Approvals | undefined
   cwd: string
   /** `null` / absent: the CLI's default model. A local preset always names its model. */
   model?: string | null | undefined
@@ -79,7 +81,7 @@ export function modelOf(i: Pick<ThreadInput, 'model' | 'local'>): string | undef
  * config?}`. Read-only steps run `{sandbox:'read-only', approvalPolicy:'never', ephemeral:true}`.
  */
 export function threadStartParams(i: ThreadInput): ThreadStartParams {
-  const { sandbox, approvalPolicy } = sandboxFor(i.step, i.mode)
+  const { sandbox, approvalPolicy, reviewer } = sandboxFor(i.step, i.mode, i.approvals)
   const model = modelOf(i)
   const config = threadConfig(i)
   return {
@@ -88,7 +90,7 @@ export function threadStartParams(i: ThreadInput): ThreadStartParams {
     ...(i.local !== undefined ? { modelProvider: LOCAL_PROVIDER_ID } : {}),
     sandbox,
     approvalPolicy,
-    approvalsReviewer: 'user',
+    approvalsReviewer: reviewer,
     ...(i.systemAppend !== undefined && i.systemAppend !== ''
       ? { developerInstructions: i.systemAppend }
       : {}),

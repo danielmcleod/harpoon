@@ -61,7 +61,7 @@ const POLICY_WORDS: Readonly<Record<string, string>> = {
  * anyone but the user on a pass that asks, is refused. Unknown policies (an external sandbox) are not judged.
  */
 export function threadPolicyProblem(
-  requested: { sandbox: string; approvalPolicy: string },
+  requested: { sandbox: string; approvalPolicy: string; reviewer?: string },
   response: Rec | undefined,
 ): Failure | undefined {
   const got = str(rec(response?.['sandbox'])?.['type'])
@@ -91,7 +91,7 @@ export function threadPolicyProblem(
     }
   }
   const reviewer = str(response?.['approvalsReviewer'])
-  if (requested.approvalPolicy !== 'never' && reviewer !== undefined && reviewer !== 'user') {
+  if (requested.approvalPolicy !== 'never' && reviewer !== undefined && reviewer !== (requested.reviewer ?? 'user')) {
     return makeFailure(
       'config_invalid',
       `Codex would send this pass's questions to ${reviewer} instead of you. Check approvals_reviewer in your Codex configuration.`,
@@ -279,6 +279,7 @@ export class CodexAppServerRun extends CodexRunBase {
       mode: o.mode,
       cwd: o.cwd,
       model: o.model,
+      approvals: o.approvals,
       local: o.local,
       systemAppend: o.systemAppend,
       mcp: o.mcp,
@@ -318,7 +319,7 @@ export class CodexAppServerRun extends CodexRunBase {
       )
       return
     }
-    const policy = threadPolicyProblem(sandboxFor(o.step, o.mode), thread)
+    const policy = threadPolicyProblem(sandboxFor(o.step, o.mode, o.approvals), thread)
     if (policy !== undefined) {
       this.#failHard(policy)
       return

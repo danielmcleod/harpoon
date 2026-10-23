@@ -59,11 +59,11 @@ describe('your own tools in a conversation', () => {
 })
 
 describe('native plan passes', () => {
-  it('read the other repositories and run no sub-agents', () => {
+  it('read the other repositories and may use sub-agents (the pass waits for them)', () => {
     const a = buildArgv({ route: 'plan', mode: 'readonly', step: 'plan', readDirs: ['/repos/api', '/repos/web'] })
     expect(a).toContain('--add-dir=/repos/api')
     expect(a).toContain('--add-dir=/repos/web')
     const disallowed = a[a.indexOf('--disallowedTools') + 1] ?? ''
-    expect(disallowed.split(',')).toEqual(expect.arrayContaining(['Task', 'Agent']))
+    expect(disallowed.split(',')).not.toContain('Agent')
   })
 })

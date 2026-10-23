@@ -1,7 +1,7 @@
 // A decision record (ADR): title, status, date, deciders, context, decision, consequences, the options considered,
 // what it concerns, its roadmap phase and what it supersedes. Saved as you type; the AI can write or rewrite it.
 import { openNote } from '../notes/noteActions.ts'
-import { Copy, ListChecks, Plus, Sparkles, Trash2, X } from 'lucide-react'
+import { CheckCheck, Copy, FileDown, Hammer, ListChecks, Plus, Sparkles, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
 import type { DecisionRecord } from '@shared/ipc.ts'
 import { DECISION_STATUSES } from '@shared/ipc.ts'
@@ -14,7 +14,8 @@ import { useModel } from '../canvas/useScene.ts'
 import { reveal } from '../panels/ArchitectureTree.tsx'
 import { NotesEditor, PhasePicker } from '../panels/inspector/governance.tsx'
 import { Chip, TextArea, TextInput } from '../panels/inspector/fields.tsx'
-import { draftWithAi, openRecord, planImplementation } from './decide.ts'
+import { draftWithAi, markBuilt, openRecord, planImplementation } from './decide.ts'
+import { copyText, openImplement, savePlan } from '../state/ai.ts'
 import { AI_NOTE_SHORT } from '../ai/AiNote.tsx'
 import { deleteRecord, putDecision, useRecords } from './recordsStore.ts'
 
@@ -33,6 +34,7 @@ export function DecisionEditor({ rec }: { rec: DecisionRecord }): React.JSX.Elem
   const editable = useStore((s) => s.ui.mode === 'edit')
   const busy = useStore((s) => Object.values(s.ai.runs).some((r) => r.mode === 'decision' && r.decisionId === rec.id && (r.status === 'running' || r.status === 'starting')))
   const [notes, setNotes] = useState('')
+  const [planPath, setPlanPath] = useState<string | null>(null)
   const save = (p: Partial<DecisionRecord>): void => void putDecision({ ...rec, ...p })
   const name = (id: string): string => {
     const n = model.nodes[id]
@@ -169,6 +171,30 @@ export function DecisionEditor({ rec }: { rec: DecisionRecord }): React.JSX.Elem
         <p className="mb-1 text-[11px] text-muted-foreground">
           How to build it in the code: steps, files, tests, rollout and risks. Planned by your CLI’s plan mode; follow up in the AI panel, for example to create issues for it.
         </p>
+        {rec.implementationPlan.trim() !== '' && (
+          <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+            <Button size="sm" variant="outline" icon={<FileDown />} onClick={() => void savePlan({ decisionId: rec.id }).then((p) => p !== null && setPlanPath(p))} title="Save it as Markdown in the plans folder (Settings → AI → Implementing)">
+              Save plan
+            </Button>
+            {planPath !== null && (
+              <Button size="sm" variant="ghost" icon={<Copy />} onClick={() => void copyText(planPath, 'the path')} title={planPath}>
+                Copy path
+              </Button>
+            )}
+            <Button size="sm" variant="ghost" icon={<Copy />} onClick={() => void copyText(rec.implementationPlan, 'the plan')}>
+              Copy plan
+            </Button>
+            {editable && rec.entityIds.length > 0 && (
+              <Button size="sm" variant="ghost" icon={<CheckCheck />} onClick={() => markBuilt(rec.entityIds)} title="Planned and in-progress parts of this decision become existing (undoable)">
+                Mark as built
+              </Button>
+            )}
+            <span className="flex-1" />
+            <Button size="sm" icon={<Hammer />} onClick={() => openImplement({ decisionId: rec.id })} title={`Your CLI edits the code to carry out this plan, asking as you choose. ${AI_NOTE_SHORT}`}>
+              Implement this plan…
+            </Button>
+          </div>
+        )}
         {rec.implementationPlan.trim() !== '' && <NotesEditor value={rec.implementationPlan} readOnly={!editable} onChange={(v) => save({ implementationPlan: v })} />}
       </section>
 

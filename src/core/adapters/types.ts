@@ -2,7 +2,7 @@
 // src/shared/events.ts; this file adds the runtime surface. The process layer stays behind RunHandle.
 import type { AdapterSignal, AllowRule, AskDecision, NormalizedEvent, Usage } from '../../shared/events.ts'
 import type { CheckResult } from '../../shared/preflight.ts'
-import type { FreshReason, Mode, PauseReason, StepKey } from '../../shared/run.ts'
+import type { FreshReason, Mode, PauseReason, StepKey, Approvals } from '../../shared/run.ts'
 import type {
   Capabilities,
   LocalPreset,
@@ -139,6 +139,8 @@ export interface StartOptions {
   prompt: string
   /** New sessions only (Claude snapshots the system prompt). */
   systemAppend?: string
+  /** Edit passes: how the CLI asks before acting (default: edits freely, asks before commands). */
+  approvals?: Approvals
   /** `null` = omit the flag and use the vendor default. */
   model?: string | null
   /** Reasoning effort (one of the model's listed levels); `null` = the vendor default. */

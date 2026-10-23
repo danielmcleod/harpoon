@@ -4,7 +4,8 @@
 import { NOTE_ACTIONS, NOTE_ITEM_KINDS } from './ipc.ts'
 import { EFFORTS } from './ipc.ts'
 import { z } from 'zod'
-import { AI_MODES, AI_VENDORS, NODE_STYLES, THEMES } from './ipc.ts'
+import { AI_MODES, AI_VENDORS, GIT_POLICIES, NODE_STYLES, THEMES } from './ipc.ts'
+import { APPROVALS } from './run.ts'
 import { OpZ } from './model/ops.ts'
 import type { Cmd, CollectionItem, ExportFormat, Req, Result } from './ipc.ts'
 import { COLLECTION_KINDS } from './ipc.ts'
@@ -73,6 +74,15 @@ export const REQUEST_SCHEMAS = {
         codex: z.strictObject({ model: ModelIdZ.nullable(), effort: EffortZ.nullable() }),
       }),
     ),
+    implement: optional(
+      z.strictObject({
+        approvals: z.enum(APPROVALS),
+        git: z.enum(GIT_POLICIES),
+        branchTemplate: z.string().trim().min(1).max(200).regex(/^[^\s~^:?*[\\]+$/, 'Branch names cannot contain spaces or ~ ^ : ? * [ \\'),
+        plansDir: z.string().trim().min(1).max(1000).refine((d) => !d.includes('\0')),
+        askTimeoutMin: z.number().int().min(1).max(240),
+      }),
+    ),
   }),
   'evidence.reveal': z.strictObject({ repo: z.string().max(ID_MAX).nullable(), path: z.string().min(1).max(1000) }),
   'project.createLocal': z.strictObject({ name: z.string().min(1).max(200), template: optional(z.enum(['blank', 'sample'])) }),
@@ -136,6 +146,21 @@ export const REQUEST_SCHEMAS = {
   'ai.clear': VoidZ,
   'ai.cancel': z.strictObject({ runId: z.string().max(ID_MAX) }),
   'ai.runs': VoidZ,
+  'ai.savePlan': z.strictObject({ runId: optional(z.string().max(ID_MAX)), decisionId: optional(z.string().max(ID_MAX)) }),
+  'ai.implement': z.strictObject({
+    runId: optional(z.string().max(ID_MAX)),
+    decisionId: optional(z.string().max(ID_MAX)),
+    vendor: optional(z.enum(AI_VENDORS)),
+    model: optional(ModelIdZ.nullable()),
+    effort: optional(EffortZ.nullable()),
+    repoId: z.string().max(ID_MAX).nullable(),
+    approvals: z.enum(APPROVALS),
+    git: z.enum(GIT_POLICIES),
+    force: optional(z.boolean()),
+    remember: optional(z.boolean()),
+  }),
+  'ai.answer': z.strictObject({ runId: z.string().max(ID_MAX), requestId: z.string().max(200), decision: z.enum(['allow', 'allow-session', 'deny']) }),
+  'ai.removeWorktree': z.strictObject({ runId: z.string().max(ID_MAX) }),
   'proposal.list': VoidZ,
   'proposal.accept': z.strictObject({
     id: z.string().max(ID_MAX),

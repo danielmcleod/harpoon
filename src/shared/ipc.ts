@@ -3,6 +3,7 @@
 import type { Rule } from './model/rules.ts'
 import type { Op } from './model/ops.ts'
 import type { Model } from './model/schema.ts'
+import type { Approvals } from './run.ts'
 
 export const CMD_CHANNEL = 'harpoon:cmd'
 export const EVT_CHANNEL = 'harpoon:evt'
@@ -90,6 +91,28 @@ export interface AppState {
   ai: AiDefaults
   /** Outside agents' access to Harpoon's MCP tools (off unless turned on). */
   externalMcp: { enabled: boolean; port: number; token: string | null }
+  /** How "Implement the plan" works on this machine. */
+  implement: ImplementSettings
+}
+
+/**
+ * Git around an Implement run: `repo` follows the repository's own instructions (CLAUDE.md, AGENTS.md, skills;
+ * Harpoon runs no git), `branch` creates a branch first, `worktree` works in a separate git worktree, `none` works in
+ * place with no git instruction.
+ */
+export const GIT_POLICIES = ['repo', 'branch', 'worktree', 'none'] as const
+export type GitPolicy = (typeof GIT_POLICIES)[number]
+
+export interface ImplementSettings {
+  /** How the CLI asks before acting (Manual, Accept edits, Auto). */
+  approvals: Approvals
+  git: GitPolicy
+  /** New branches: `{slug}` (from the plan's title) and `{date}` are filled in. */
+  branchTemplate: string
+  /** Saved plans go here: relative to the project folder, or an absolute folder. */
+  plansDir: string
+  /** How long an approval request waits for an answer before it is declined. */
+  askTimeoutMin: number
 }
 
 /** Per vendor: the model and effort runs start with (null: the CLI's own default). */
@@ -141,6 +164,7 @@ export interface AppStatePatch {
   nodeStyle?: NodeStyle
   designsDir?: string
   ai?: AiDefaults
+  implement?: ImplementSettings
 }
 
 /** A git repository found on disk. */
@@ -321,6 +345,52 @@ export interface AiQuestion {
   multi: boolean
 }
 
+/** Something the CLI wants to do in an Implement run and needs the user's OK for. */
+export interface AiAsk {
+  requestId: string
+  kind: 'edit' | 'shell' | 'network' | 'other'
+  /** The command, file or address. */
+  detail: string
+  reason: string | null
+  /** "Allow for this run" is possible. */
+  allowSession: boolean
+  /** Declined at this time if unanswered (ms since epoch). */
+  expiresAt: number
+}
+
+/** An Implement run: where it works and what it changed. */
+export interface AiBuild {
+  repoName: string
+  /** Where the CLI works (the repository, or the worktree made for the run). */
+  cwd: string
+  /** The repository itself (a worktree's parent). */
+  repoPath: string
+  approvals: Approvals
+  git: GitPolicy
+  branch: string | null
+  worktree: string | null
+  /** Uncommitted files after the last pass (git status), else the files the CLI reported editing. */
+  changedFiles: string[]
+}
+
+export interface AiImplementRequest {
+  /** Implement the plan of this conversation… */
+  runId?: string
+  /** …or the plan kept on this decision (a new conversation). */
+  decisionId?: string
+  vendor?: AiVendor
+  model?: string | null
+  effort?: string | null
+  /** The linked repository to work in (null: the project folder). */
+  repoId: string | null
+  approvals: Approvals
+  git: GitPolicy
+  /** Go ahead although the repository has uncommitted changes. */
+  force?: boolean
+  /** Keep approvals and git as this machine's defaults. */
+  remember?: boolean
+}
+
 export interface AiUsage {
   input: number
   output: number
@@ -340,6 +410,14 @@ export interface AiRunView {
   plan: string | null
   /** Running, but the CLI has said nothing since this time (ms since epoch; null: it is talking). */
   quietSince: number | null
+  /** The CLI answered but waits on background work it started (shells, sub-agents); null: none. */
+  waiting: string[] | null
+  /** implement: where the plan was saved as a file (null: not saved). */
+  planPath: string | null
+  /** Implementing: requests waiting for the user's OK. */
+  asks: AiAsk[]
+  /** Implementing the plan (null: planning or talking only). */
+  build: AiBuild | null
   mode: AiMode
   status: AiRunStatus
   title: string
@@ -675,6 +753,14 @@ export interface Commands {
   'ai.clear': { req: void; res: void }
   'ai.cancel': { req: { runId: string }; res: void }
   'ai.runs': { req: void; res: AiRunView[] }
+  /** Save a conversation's plan, or a decision's, as a Markdown file in the plans folder. */
+  'ai.savePlan': { req: { runId?: string; decisionId?: string }; res: { path: string } }
+  /** Have the CLI carry out a plan in a repository (editing files, asking as the approvals setting says). */
+  'ai.implement': { req: AiImplementRequest; res: AiRunView }
+  /** Answer an Implement run's approval request. */
+  'ai.answer': { req: { runId: string; requestId: string; decision: 'allow' | 'allow-session' | 'deny' }; res: void }
+  /** Remove the git worktree an Implement run worked in (its branch stays). */
+  'ai.removeWorktree': { req: { runId: string }; res: void }
   'proposal.list': { req: void; res: Proposal[] }
   /** `phase`: with asPlanned, the roadmap phase the new things land in. */
   'proposal.accept': { req: { id: string; opIndexes?: number[]; asPlanned?: boolean; phase?: string }; res: { version: number } }
@@ -768,6 +854,10 @@ export const COMMAND_AREA = {
   'ai.clear': 'ai',
   'ai.cancel': 'ai',
   'ai.runs': 'ai',
+  'ai.savePlan': 'ai',
+  'ai.implement': 'ai',
+  'ai.answer': 'ai',
+  'ai.removeWorktree': 'ai',
   'proposal.list': 'ai',
   'proposal.accept': 'ai',
   'proposal.discard': 'ai',

@@ -2,7 +2,9 @@
 // each one starts with, and access for outside agents to Harpoon's MCP tools.
 import { CheckCircle2, CircleAlert, Copy, Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import type { AiDefaults, AiVendor, CodexPluginResult, ExternalMcpView, ProviderView } from '@shared/ipc.ts'
+import type { AiDefaults, AiVendor, CodexPluginResult, ExternalMcpView, GitPolicy, ImplementSettings, ProviderView } from '@shared/ipc.ts'
+import type { Approvals } from '@shared/run.ts'
+import { APPROVAL_INFO, GIT_INFO } from '../ai/ImplementDialog.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { Switch } from '../components/ui/Switch.tsx'
 import { invoke } from '../ipc/client.ts'
@@ -75,8 +77,87 @@ export function AiTab(): React.JSX.Element {
         {providers === null && <p className="text-muted-foreground">Checking your CLIs…</p>}
       </section>
 
+      <Implementing />
+
       <OutsideAgents />
     </div>
+  )
+}
+
+/** How "Implement this plan" starts on this computer (the dialog can change it per run). */
+function Implementing(): React.JSX.Element {
+  const cur = useStore((s) => s.prefs.implement)
+  const [template, setTemplate] = useState(cur.branchTemplate)
+  const [plansDir, setPlansDir] = useState(cur.plansDir)
+  useEffect(() => {
+    setTemplate(cur.branchTemplate)
+    setPlansDir(cur.plansDir)
+  }, [cur.branchTemplate, cur.plansDir])
+  const save = async (p: Partial<ImplementSettings>): Promise<void> => {
+    const r = await invoke('state.set', { implement: { ...cur, ...p } })
+    if (!r.ok) return toast(r.error.message, 'error')
+    setState({ prefs: r.value })
+  }
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-semibold">Implementing</h3>
+      <p className="text-muted-foreground">
+        “Implement this plan” has your CLI edit the code. These are the defaults on this computer; the Implement dialog can change them for one run.
+      </p>
+      <label className="flex items-center gap-2">
+        <span className="w-28 text-muted-foreground">Before it acts</span>
+        <select value={cur.approvals} onChange={(e) => void save({ approvals: e.target.value as Approvals })} className="h-7 rounded-md border bg-background px-1.5">
+          {(Object.keys(APPROVAL_INFO) as Approvals[]).map((a) => (
+            <option key={a} value={a}>
+              {APPROVAL_INFO[a].label}
+            </option>
+          ))}
+        </select>
+        <span className="min-w-0 flex-1 text-muted-foreground">{APPROVAL_INFO[cur.approvals].hint}</span>
+      </label>
+      <label className="flex items-center gap-2">
+        <span className="w-28 text-muted-foreground">Git</span>
+        <select value={cur.git} onChange={(e) => void save({ git: e.target.value as GitPolicy })} className="h-7 rounded-md border bg-background px-1.5">
+          {(Object.keys(GIT_INFO) as GitPolicy[]).map((g) => (
+            <option key={g} value={g}>
+              {GIT_INFO[g].label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="pl-30 text-muted-foreground">{GIT_INFO[cur.git].hint}</p>
+      <label className="flex items-center gap-2">
+        <span className="w-28 text-muted-foreground">Branch template</span>
+        <input
+          value={template}
+          onChange={(e) => setTemplate(e.target.value)}
+          onBlur={() => template.trim() !== '' && template !== cur.branchTemplate && void save({ branchTemplate: template.trim() })}
+          className="h-7 w-56 rounded-md border bg-background px-1.5 font-mono"
+        />
+        <span className="text-muted-foreground">{'{slug}'} is the plan’s name, {'{date}'} today’s date.</span>
+      </label>
+      <label className="flex items-center gap-2">
+        <span className="w-28 text-muted-foreground">Plans folder</span>
+        <input
+          value={plansDir}
+          onChange={(e) => setPlansDir(e.target.value)}
+          onBlur={() => plansDir.trim() !== '' && plansDir !== cur.plansDir && void save({ plansDir: plansDir.trim() })}
+          className="h-7 w-56 rounded-md border bg-background px-1.5 font-mono"
+        />
+        <span className="text-muted-foreground">Inside the project (default .harpoon/plans), or an absolute folder.</span>
+      </label>
+      <label className="flex items-center gap-2">
+        <span className="w-28 text-muted-foreground">Approval wait</span>
+        <select value={cur.askTimeoutMin} onChange={(e) => void save({ askTimeoutMin: Number(e.target.value) })} className="h-7 rounded-md border bg-background px-1.5">
+          {[5, 15, 30, 60, 120].map((m) => (
+            <option key={m} value={m}>
+              {m} minutes
+            </option>
+          ))}
+        </select>
+        <span className="text-muted-foreground">An unanswered request is declined after this.</span>
+      </label>
+    </section>
   )
 }
 

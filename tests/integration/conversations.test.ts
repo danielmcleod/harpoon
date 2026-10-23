@@ -24,7 +24,7 @@ async function tmp(): Promise<string> {
 }
 
 const view = (id: string, status: AiRunView['status']): AiRunView => ({
-  id, vendor: 'claude', model: null, effort: null, external: false, tools: [], plan: null, quietSince: null, mode: 'plan', status,
+  id, vendor: 'claude', model: null, effort: null, external: false, tools: [], plan: null, quietSince: null, waiting: null, planPath: null, asks: [], build: null, mode: 'plan', status,
   title: `Conversation ${id}`, createdAt: Date.now(), turns: [{ role: 'user', text: 'Add a fraud scorer' }, { role: 'assistant', text: 'Staged it.' }],
   activity: [], usage: null, proposalId: null, error: null, changeCount: 0, phase: null, questions: null, solutionSetId: null, decisionId: null,
   options: [], activeOption: null, suggestions: null, notePath: null,

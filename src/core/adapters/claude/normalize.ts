@@ -52,6 +52,7 @@ import {
   sessionPermissions,
   str,
 } from './protocol.ts'
+import { addUsage } from '../usage.ts'
 
 /** plan = native plan + host; readonly = read-only route (no host); edit = implement / fix (host). */
 export type ClaudeRoute = 'plan' | 'readonly' | 'edit'
@@ -99,6 +100,8 @@ export interface NormalizeStep {
   planCaptured?: boolean
   /** The pass already failed; the adapter should stop the process (e.g. an invalid API key being retried). */
   abort?: boolean
+  /** The background work a held answer waits on just finished (the CLI should start its follow-up turn). */
+  drained?: boolean
 }
 
 export interface EndInput {
@@ -204,6 +207,8 @@ export class ClaudeNormalizer {
   readonly #stderrTail = new TailBuffer(40, 2000)
   #sessionId: string | undefined
   #finalMsg = ''
+  /** Some text was said already this pass (later text after a tool call starts a new paragraph). */
+  #saidAny = false
   #terminal = false
   #sawResult = false
   #plan: string | undefined
@@ -212,6 +217,10 @@ export class ClaudeNormalizer {
   #malformed = 0
   #maxMalformed = 0
   #reported: Usage | undefined
+  /** Background work the CLI reports as still running (background_tasks_changed). */
+  #background: { id: string; description: string }[] = []
+  /** An answer that arrived while background work still ran: the pass ends with the turn after it finishes. */
+  #held: { text: string; usage: Usage | undefined } | undefined
   #apiKeySource: string | undefined
   #apiKeyEnv: boolean
 
@@ -251,6 +260,21 @@ export class ClaudeNormalizer {
 
   get sawResult(): boolean {
     return this.#sawResult
+  }
+
+  /** The CLI answered but waits on background work (keep stdin open: it starts a new turn when the work ends). */
+  get waiting(): boolean {
+    return this.#held !== undefined && !this.#terminal
+  }
+
+  /** End a held pass with the answer it has (the work finished without a follow-up turn, or the wait ran out). */
+  finishHeld(): NormalizeStep {
+    const step = emptyStep()
+    const h = this.#held
+    if (h === undefined || this.#terminal) return step
+    this.#held = undefined
+    this.#done(h.text, h.usage, step)
+    return step
   }
 
   get planCaptured(): boolean {
@@ -392,6 +416,13 @@ export class ClaudeNormalizer {
       this.#done(this.#plan, undefined, step)
       return step
     }
+    // Stopped or gone while waiting on background work: the answer it gave still stands.
+    if (this.#held !== undefined) {
+      const h = this.#held
+      this.#held = undefined
+      this.#done(h.text, h.usage, step)
+      return step
+    }
     if (this.#killedBy !== undefined) {
       this.#harpoonError(step)
       return step
@@ -485,8 +516,11 @@ export class ClaudeNormalizer {
     if (delta?.['type'] !== 'text_delta') return
     const text = str(delta['text'])
     if (text === undefined || text === '') return
+    // Words after a tool call (or a new turn) start a new paragraph instead of running on from the last ones.
+    const sep = this.#finalMsg === '' && this.#saidAny ? '\n\n' : ''
+    this.#saidAny = true
     this.#finalMsg += text
-    step.events.push({ type: 'text', delta: text })
+    step.events.push({ type: 'text', delta: sep + text })
   }
 
   #assistant(f: JsonObject, step: NormalizeStep): void {
@@ -548,6 +582,8 @@ export class ClaudeNormalizer {
   #system(f: JsonObject, step: NormalizeStep): void {
     const sub = str(f['subtype'])
     if (sub === 'init') {
+      // The CLI's follow-up turn after background work: its final message is the one that follows.
+      if (this.#held !== undefined) this.#finalMsg = ''
       const id = str(f['session_id'])
       if (id !== undefined) this.#session(id, step)
       this.#apiKeySource = str(f['apiKeySource'])
@@ -562,6 +598,16 @@ export class ClaudeNormalizer {
       ]
       for (const [key, value] of meta)
         if (value !== undefined) step.signals.push({ type: 'meta', key, value })
+      return
+    }
+    if (sub === 'background_tasks_changed' && Array.isArray(f['tasks'])) {
+      this.#background = f['tasks'].flatMap((t) => {
+        const o = obj(t)
+        const id = str(o?.['task_id'])
+        return id === undefined ? [] : [{ id, description: str(o?.['description']) ?? str(o?.['task_type']) ?? 'background task' }]
+      })
+      if (this.#held !== undefined || this.#background.length > 0) step.signals.push({ type: 'waiting', tasks: this.#background.map((t) => t.description) })
+      if (this.#held !== undefined && this.#background.length === 0) step.drained = true
       return
     }
     if (sub === 'permission_denied') {
@@ -688,6 +734,13 @@ export class ClaudeNormalizer {
     const failed = r.is_error === true || r.subtype !== 'success'
     if (!failed) {
       const text = this.#finalMsg !== '' ? this.#finalMsg : (r.result ?? '')
+      const total = this.#held === undefined ? usage : usage === undefined ? this.#held.usage : this.#held.usage === undefined ? usage : addUsage(this.#held.usage, usage)
+      // Background shells or sub-agents still run: hold the answer; the CLI starts a new turn when they finish.
+      if (this.#background.length > 0) {
+        this.#held = { text, usage: total }
+        step.signals.push({ type: 'waiting', tasks: this.#background.map((t) => t.description) })
+        return
+      }
       if (this.route === 'plan' && text.trim() !== '') {
         this.#capture = { markdown: text.trim(), source: 'final-message' }
         step.signals.push({ type: 'plan-captured', markdown: text.trim(), source: 'final-message' })
@@ -695,7 +748,8 @@ export class ClaudeNormalizer {
       // C17: the answer to initialize's jsonSchema, ahead of the `done` it belongs to.
       if (r.structured_output !== undefined && r.structured_output !== null)
         step.signals.push({ type: 'meta', key: META_STRUCTURED_OUTPUT, value: r.structured_output })
-      this.#done(text, usage, step)
+      this.#held = undefined
+      this.#done(text, total, step)
       return
     }
     if (usage !== undefined) step.signals.push({ type: 'meta', key: META_USAGE, value: usage })

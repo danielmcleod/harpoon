@@ -2,7 +2,7 @@
 // The prompt never goes in argv: it is the first user message on stdin.
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { Mode } from '../../../shared/run.ts'
+import type { Mode, Approvals } from '../../../shared/run.ts'
 import type { EnvInput } from '../../proc/env.ts'
 import { getEnv, sanitizeEnv } from '../../proc/env.ts'
 import type { StartStep } from '../types.ts'
@@ -36,9 +36,13 @@ export function routeFor(o: { step: StartStep; mode: Mode; planNative: boolean }
   return 'edit'
 }
 
-export function permissionModeFor(route: ClaudeRoute, mode: Mode): string {
+export function permissionModeFor(route: ClaudeRoute, mode: Mode, approvals?: Approvals): string {
   if (route === 'plan') return 'plan'
   if (route === 'readonly') return 'dontAsk'
+  // Harpoon's Implement: the user's choice of how much it asks (never bypass).
+  if (approvals === 'manual') return 'manual'
+  if (approvals === 'auto') return 'auto'
+  if (approvals === 'acceptEdits') return 'acceptEdits'
   return mode === 'full' ? 'bypassPermissions' : 'acceptEdits'
 }
 
@@ -48,6 +52,7 @@ export interface ArgvInput {
   step: StartStep
   model?: string | null | undefined
   effort?: string | null | undefined
+  approvals?: Approvals | undefined
   /** Fresh edit sessions: `--session-id=<uuid>`. */
   sessionId?: string | undefined
   /** Fix reuse / resume: `--resume=<id>` and never `--session-id` (C08e: the CLI rejects both). */
@@ -133,7 +138,7 @@ export function buildArgv(i: ArgvInput): string[] {
     '--verbose',
     '--include-partial-messages',
     '--permission-mode',
-    permissionModeFor(i.route, i.mode),
+    permissionModeFor(i.route, i.mode, i.approvals),
   ]
   if (i.model !== undefined && i.model !== null && i.model !== '') a.push('--model', i.model)
   if (i.effort !== undefined && i.effort !== null && /^[a-z]+$/.test(i.effort)) a.push('--effort', i.effort)
@@ -149,10 +154,6 @@ export function buildArgv(i: ArgvInput): string[] {
         '--disallowedTools',
         joinList([
           'AskUserQuestion',
-          // Sub-agents can outlive a one-shot plan pass (it ends while they still run, with no plan presented);
-          // the plan reads the code itself.
-          'Task',
-          'Agent',
           ...(i.disallowShell === true || PLAN_DISALLOWS_SHELL ? SHELL_TOOLS : []),
         ]),
       )
@@ -215,6 +216,8 @@ export function buildArgv(i: ArgvInput): string[] {
       if (i.resumeId !== undefined) a.push(`--resume=${i.resumeId}`)
       else if (i.sessionId !== undefined) a.push(`--session-id=${i.sessionId}`)
       if (i.ephemeral === true) a.push('--no-session-persistence')
+      // Implement: the project's other folders, readable (edits stay in the working directory unless approved).
+      for (const d of i.readDirs ?? []) if (d !== '' && !/[\r\n\0]/.test(d)) a.push(`--add-dir=${d}`)
       break
     }
   }

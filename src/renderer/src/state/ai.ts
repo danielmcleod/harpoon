@@ -1,5 +1,5 @@
 // AI actions: providers, conversations, proposals and the Diff & Merge review.
-import type { AiContext, AiMode, AiVendor } from '@shared/ipc.ts'
+import type { AiContext, AiImplementRequest, AiMode, AiVendor, ResultCode } from '@shared/ipc.ts'
 import { invoke } from '../ipc/client.ts'
 import { pickFor, toast } from './actions.ts'
 import { getState, setAi, setUi } from './store.ts'
@@ -60,6 +60,49 @@ export async function ask(prompt: string, o: { fresh?: boolean; mode?: AiMode; c
   if (!r.ok) return toast(r.error.message, 'error')
   setAi((s) => ({ activeRunId: r.value.id, runs: { ...s.runs, [r.value.id]: r.value }, review: { kind: 'draft', runId: r.value.id }, excluded: {} }))
   setUi({ aiOpen: true })
+}
+
+/** Open the Implement dialog for a conversation's plan or a decision's. */
+export function openImplement(target: { runId?: string; decisionId?: string }): void {
+  setAi({ implementing: target })
+}
+
+/** Save a plan as a Markdown file in the plans folder (Settings → AI → Implementing); returns its path. */
+export async function savePlan(target: { runId?: string; decisionId?: string }): Promise<string | null> {
+  const r = await invoke('ai.savePlan', target)
+  if (!r.ok) {
+    toast(r.error.message, 'error')
+    return null
+  }
+  toast(`Saved the plan to ${r.value.path}`)
+  return r.value.path
+}
+
+export async function copyText(text: string, what: string): Promise<void> {
+  await navigator.clipboard.writeText(text)
+  toast(`Copied ${what}.`)
+}
+
+/** Start implementing a plan with the panel's CLI and model. Errors come back (the dialog shows them). */
+export async function implementPlan(req: Omit<AiImplementRequest, 'vendor' | 'model' | 'effort'>): Promise<{ code: ResultCode; message: string } | null> {
+  const ai = getState().ai
+  const r = await invoke('ai.implement', { ...req, vendor: ai.vendor, model: ai.model, effort: ai.effort })
+  if (!r.ok) return r.error
+  setAi((s) => ({ implementing: null, activeRunId: r.value.id, mode: 'implement', runs: { ...s.runs, [r.value.id]: r.value } }))
+  setUi({ aiOpen: true })
+  return null
+}
+
+/** Answer an Implement run's request to edit a file or run a command. */
+export async function answerAsk(runId: string, requestId: string, decision: 'allow' | 'allow-session' | 'deny'): Promise<void> {
+  const r = await invoke('ai.answer', { runId, requestId, decision })
+  if (!r.ok) toast(r.error.message, 'error')
+}
+
+export async function removeWorktree(runId: string): Promise<void> {
+  const r = await invoke('ai.removeWorktree', { runId })
+  if (!r.ok) toast(r.error.message, 'error')
+  else toast('Removed the worktree; its branch is kept.')
 }
 
 /** Forget a conversation (here and in the history kept on this computer). */

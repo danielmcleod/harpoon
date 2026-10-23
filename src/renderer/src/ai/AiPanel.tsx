@@ -4,12 +4,16 @@
 import { openNote } from '../notes/noteActions.ts'
 import { edit } from '../state/actions.ts'
 import { openRecord } from '../records/decide.ts'
-import { Bot, ChevronDown, CircleAlert, History, Loader2, NotebookPen, Plus, RefreshCw, Scale, ScanSearch, ScrollText, Send, Square, Wrench, X, Trash2 } from 'lucide-react'
+import { Bot, ChevronDown, CircleAlert, History, Loader2, NotebookPen, Plus, RefreshCw, Scale, ScanSearch, ScrollText, Send, Square, Wrench, X, Trash2, CheckCheck, Copy, FileDown, FolderOpen, Hammer, ShieldQuestion } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { AiMode, AiRunView } from '@shared/ipc.ts'
+import type { AiAsk, AiMode, AiRunView } from '@shared/ipc.ts'
 import { Button } from '../components/ui/Button.tsx'
 import { cn } from '../lib/cn.ts'
-import { ask, cancelRun, clearHistory, deleteConversation, loadProviders, newConversation, setAiMode, setVendor } from '../state/ai.ts'
+import { answerAsk, ask, cancelRun, clearHistory, copyText, deleteConversation, loadProviders, newConversation, openImplement, removeWorktree, savePlan, setAiMode, setVendor } from '../state/ai.ts'
+import { invoke } from '../ipc/client.ts'
+import { markBuilt } from '../records/decide.ts'
+import { useRecords } from '../records/recordsStore.ts'
+import { APPROVAL_INFO } from './ImplementDialog.tsx'
 import { getState, setAi, setUi, useStore } from '../state/store.ts'
 import { Markdown } from './Markdown.tsx'
 import { ProposalCard } from './ProposalCard.tsx'
@@ -286,7 +290,11 @@ function Intro({ mode }: { mode: AiMode }): React.JSX.Element {
       <p className="mt-1 text-xs text-muted-foreground">{MODE_INFO[mode].hint}</p>
       <AiNote className="mt-4" />
       <ul className="mt-4 flex flex-col gap-2 text-xs text-muted-foreground">
-        <li>• It runs in this project&apos;s folder, read-only: it can read the code but never edits files.</li>
+        {mode === 'implement' ? (
+          <li>• It plans in your CLI&apos;s own plan mode, read-only. Then save the plan as a file, or have the CLI implement it in a repository, asking as you choose.</li>
+        ) : (
+          <li>• It runs in this project&apos;s folder, read-only: it can read the code but never edits files.</li>
+        )}
         <li>• It changes the diagram only through Harpoon&apos;s tools, into a draft you review here and on the canvas.</li>
         <li>• Select nodes (or open one) first to give it a scope.</li>
       </ul>
@@ -346,12 +354,17 @@ function Conversation({ run }: { run: AiRunView }): React.JSX.Element {
         </div>
       )}
 
+      {run.asks.map((a) => (
+        <ApprovalCard key={a.requestId} runId={run.id} ask={a} />
+      ))}
       {busy && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Loader2 className="size-3.5 animate-spin" />
-          {run.status === 'starting' ? 'Starting…' : (run.phase ?? 'Working…')}
+          {run.status === 'starting' ? 'Starting…' : run.asks.length > 0 ? 'Waiting for your approval' : (run.phase ?? 'Working…')}
         </div>
       )}
+      {run.build !== null && <BuildCard run={run} busy={busy} />}
+      {run.mode === 'implement' && run.plan !== null && !busy && <PlanActions run={run} />}
       {highlight !== null && highlight.runId === run.id && highlight.note !== null && (
         <div className="rounded-md border border-info/40 bg-info/10 px-2.5 py-1.5 text-[11.5px]">
           {highlight.note}
@@ -361,7 +374,8 @@ function Conversation({ run }: { run: AiRunView }): React.JSX.Element {
         </div>
       )}
       {run.questions !== null && run.questions.length > 0 && !busy && <QuestionCard runId={run.id} questions={run.questions} />}
-      {run.quietSince !== null && (run.status === 'running' || run.status === 'starting') && <QuietNotice run={run} />}
+      {run.waiting !== null && run.status === 'running' && <WaitingNotice run={run} waiting={run.waiting} />}
+      {run.quietSince !== null && run.waiting === null && (run.status === 'running' || run.status === 'starting') && <QuietNotice run={run} />}
       {run.error !== null && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-2.5 py-1.5 text-xs selectable">{run.error}</div>
       )}
@@ -557,6 +571,125 @@ function QuietNotice({ run }: { run: AiRunView }): React.JSX.Element {
       <span className="flex-1">
         No output for {minutes} minutes. {run.vendor === 'claude' ? 'Claude Code' : 'Codex'} may still be reading the code, or be stuck. Stop it to reply with
         new instructions.
+      </span>
+      <Button size="sm" variant="outline" icon={<Square />} onClick={() => void cancelRun(run.id)}>
+        Stop
+      </Button>
+    </div>
+  )
+}
+
+/** A plan the CLI's plan mode wrote: keep it as a file, copy it, or have the CLI carry it out. */
+function PlanActions({ run }: { run: AiRunView }): React.JSX.Element {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 rounded-xl border bg-background p-2.5 text-xs">
+      <Button size="sm" variant="outline" icon={<FileDown />} onClick={() => void savePlan({ runId: run.id })} title="Save it as Markdown in the plans folder (Settings → AI → Implementing)">
+        {run.planPath === null ? 'Save plan' : 'Save again'}
+      </Button>
+      {run.planPath !== null && (
+        <Button size="sm" variant="ghost" icon={<Copy />} onClick={() => void copyText(run.planPath ?? '', 'the path')} title={run.planPath}>
+          Copy path
+        </Button>
+      )}
+      <Button size="sm" variant="ghost" icon={<Copy />} onClick={() => void copyText(run.plan ?? '', 'the plan')}>
+        Copy plan
+      </Button>
+      <span className="flex-1" />
+      <Button size="sm" icon={<Hammer />} onClick={() => openImplement({ runId: run.id })} title="Your CLI edits the code to carry out the plan, asking as you choose">
+        {run.build === null ? 'Implement this plan…' : 'Implement again…'}
+      </Button>
+    </div>
+  )
+}
+
+/** The CLI wants to edit a file or run a command, and the run's approvals say to ask. */
+function ApprovalCard({ runId, ask: a }: { runId: string; ask: AiAsk }): React.JSX.Element {
+  const what = a.kind === 'edit' ? 'Edit a file' : a.kind === 'shell' ? 'Run a command' : a.kind === 'network' ? 'Reach the network' : 'Use a tool'
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-warning/60 bg-warning/10 p-2.5 text-xs">
+      <div className="flex items-center gap-2 font-medium">
+        <ShieldQuestion className="size-3.5 text-warning" />
+        Approval needed: {what}
+      </div>
+      <code className="max-h-32 overflow-auto rounded bg-background/70 px-2 py-1 text-[11px] whitespace-pre-wrap selectable">{a.detail}</code>
+      {a.reason !== null && <p className="text-muted-foreground">{a.reason}</p>}
+      <div className="flex flex-wrap gap-1.5">
+        <Button size="sm" onClick={() => void answerAsk(runId, a.requestId, 'allow')}>
+          Allow
+        </Button>
+        {a.allowSession && (
+          <Button size="sm" variant="outline" onClick={() => void answerAsk(runId, a.requestId, 'allow-session')}>
+            Allow for this run
+          </Button>
+        )}
+        <Button size="sm" variant="ghost" onClick={() => void answerAsk(runId, a.requestId, 'deny')}>
+          Deny
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/** Implementing: where it works, its branch or worktree, and what changed. */
+function BuildCard({ run, busy }: { run: AiRunView; busy: boolean }): React.JSX.Element | null {
+  const b = run.build
+  const decision = useRecords((s) => (run.decisionId === null ? undefined : s.decisions.find((d) => d.id === run.decisionId)))
+  if (b === null) return null
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border bg-background p-3 text-xs">
+      <div className="flex items-center gap-2">
+        <Hammer className="size-3.5 text-muted-foreground" />
+        <span className="flex-1 font-medium">Implementing in {b.repoName}</span>
+        <span className="text-muted-foreground">{APPROVAL_INFO[b.approvals].label}</span>
+      </div>
+      {(b.branch !== null || b.worktree !== null) && (
+        <p className="text-muted-foreground selectable">
+          {b.branch !== null && <>Branch <code>{b.branch}</code>. </>}
+          {b.worktree !== null && <>Worktree {b.worktree}</>}
+        </p>
+      )}
+      {b.changedFiles.length > 0 && (
+        <div>
+          <p className="mb-1 text-muted-foreground">{b.changedFiles.length} changed file{b.changedFiles.length === 1 ? '' : 's'} (uncommitted):</p>
+          <ul className="max-h-36 overflow-y-auto font-mono text-[10.5px] selectable">
+            {b.changedFiles.slice(0, 40).map((f) => (
+              <li key={f} className="truncate">
+                {f}
+              </li>
+            ))}
+            {b.changedFiles.length > 40 && <li className="text-muted-foreground">…and {b.changedFiles.length - 40} more</li>}
+          </ul>
+        </div>
+      )}
+      {!busy && (
+        <div className="flex flex-wrap gap-1.5">
+          <Button size="sm" variant="outline" icon={<FolderOpen />} onClick={() => void invoke('shell.open', { target: 'folder', path: b.cwd })}>
+            Open folder
+          </Button>
+          {b.worktree !== null && (
+            <Button size="sm" variant="ghost" icon={<Trash2 />} onClick={() => void removeWorktree(run.id)} title="git worktree remove (the branch stays)">
+              Remove worktree
+            </Button>
+          )}
+          {decision !== undefined && decision.entityIds.length > 0 && (
+            <Button size="sm" variant="ghost" icon={<CheckCheck />} onClick={() => markBuilt(decision.entityIds)} title="Planned and in-progress parts of this decision become existing (undoable)">
+              Mark the planned parts as built
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** The CLI answered but its background work (shells, sub-agents) still runs; the conversation goes on when it ends. */
+function WaitingNotice({ run, waiting }: { run: AiRunView; waiting: string[] }): React.JSX.Element {
+  return (
+    <div className="flex items-start gap-2 rounded-md border border-info/40 bg-info/10 px-2.5 py-1.5 text-xs">
+      <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin text-info" />
+      <span className="flex-1">
+        Waiting on background work ({waiting.length}): {waiting.slice(0, 3).join(', ')}
+        {waiting.length > 3 ? '…' : ''}. {run.vendor === 'claude' ? 'Claude Code' : 'Codex'} carries on when it finishes.
       </span>
       <Button size="sm" variant="outline" icon={<Square />} onClick={() => void cancelRun(run.id)}>
         Stop

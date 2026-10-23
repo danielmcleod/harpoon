@@ -68,6 +68,10 @@ export interface RunTiming {
   planResultMs: number
   stopResultMs: number
   stopStdinMs: number
+  /** How long an answer waits on its background work before the pass ends anyway. */
+  backgroundMs: number
+  /** After the background work ends, how long to wait for the CLI's follow-up turn. */
+  drainedMs: number
 }
 
 const DEFAULT_TIMING: RunTiming = {
@@ -75,6 +79,8 @@ const DEFAULT_TIMING: RunTiming = {
   planResultMs: PLAN_RESULT_TIMEOUT_MS,
   stopResultMs: STOP_RESULT_WAIT_MS,
   stopStdinMs: STOP_STDIN_WAIT_MS,
+  backgroundMs: 30 * 60_000,
+  drainedMs: 20_000,
 }
 
 const KILL_FOR_REASON: Record<StopReason, HarpoonKill> = { user: 'stop', timeout: 'hard', shutdown: 'quit' }
@@ -109,6 +115,8 @@ export class ClaudeRun implements RunHandle {
   #writeChain: Promise<unknown> = Promise.resolve()
   #stdinClosed = false
   #planTimer: NodeJS.Timeout | undefined
+  #waitTimer: NodeJS.Timeout | undefined
+  #drainTimer: NodeJS.Timeout | undefined
   #startedAt: number
   #resolveExited: (e: ExitInfo) => void = () => undefined
   #preSpawnTerminal = false
@@ -227,6 +235,7 @@ export class ClaudeRun implements RunHandle {
       step: o.step,
       model: o.model,
       effort: o.effort,
+      approvals: o.approvals,
       sessionId: this.#presetSession,
       resumeId,
       nativeRules: o.allowRules.filter((r) => r.vendor === CLAUDE_VENDOR).flatMap((r) => r.nativeRules ?? []),
@@ -237,7 +246,7 @@ export class ClaudeRun implements RunHandle {
       // Only the catalog step reads it (launch.ts); `true` is web search without page fetches.
       webDomains: typeof o.web === 'object' ? o.web.allowedDomains : undefined,
       mcp: o.mcp !== undefined ? { name: o.mcp.name, configFile: o.mcp.configFile, allow: o.mcp.allow, readCode: o.mcp.readCode } : undefined,
-      readDirs: o.step === 'design' || o.step === 'plan' ? o.readDirs : undefined,
+      readDirs: o.step === 'design' || o.step === 'plan' || o.step === 'implement' ? o.readDirs : undefined,
     })
     const env = claudeEnv(this.#deps.baseEnv, {
       route,
@@ -375,6 +384,7 @@ export class ClaudeRun implements RunHandle {
     }
     if (step.result === true || this.#n.terminal) this.#wakeResultWaiters()
     if (step.abort === true) void this.#hardStop()
+    this.#watchBackground(step)
     this.#maybeCloseStdin()
   }
 
@@ -391,9 +401,39 @@ export class ClaudeRun implements RunHandle {
     this.#writeChain = this.#writeChain.then(() => child.closeStdin()).catch(() => undefined)
   }
 
-  /** Close stdin after the first result, once no asks are pending. */
+  /** Close stdin after the first result, once no asks are pending and no background work is awaited. */
   #maybeCloseStdin(): void {
+    if (this.#n.waiting) return
     if ((this.#n.sawResult || this.#n.terminal) && this.#n.pendingAsks().length === 0) this.#closeStdin()
+  }
+
+  /**
+   * An answer waiting on background work: the pass ends with the CLI's follow-up turn when the work finishes, or with
+   * the answer it has if no turn follows (or the wait runs out).
+   */
+  #watchBackground(step: NormalizeStep): void {
+    if (!this.#n.waiting) {
+      clearTimeout(this.#waitTimer)
+      clearTimeout(this.#drainTimer)
+      this.#waitTimer = this.#drainTimer = undefined
+      return
+    }
+    const finish = (): void => {
+      this.#apply(this.#n.finishHeld())
+    }
+    if (this.#waitTimer === undefined) {
+      this.#waitTimer = setTimeout(finish, this.#timing.backgroundMs)
+      this.#waitTimer.unref()
+    }
+    if (step.drained === true) {
+      clearTimeout(this.#drainTimer)
+      this.#drainTimer = setTimeout(finish, this.#timing.drainedMs)
+      this.#drainTimer.unref()
+    } else if (step.events.length > 0) {
+      // The follow-up turn started: it ends the pass with its own result.
+      clearTimeout(this.#drainTimer)
+      this.#drainTimer = undefined
+    }
   }
 
   #wakeResultWaiters(): void {
@@ -526,6 +566,8 @@ export class ClaudeRun implements RunHandle {
     if (this.#finished) return
     this.#finished = true
     if (this.#planTimer !== undefined) clearTimeout(this.#planTimer)
+    clearTimeout(this.#waitTimer)
+    clearTimeout(this.#drainTimer)
     for (const w of [...this.#replyWaiters.values()]) w(undefined)
     this.#wakeResultWaiters()
     const sawTerminal = this.#n.terminal || this.#preSpawnTerminal

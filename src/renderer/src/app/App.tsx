@@ -5,6 +5,7 @@ import { subscribeEvents } from '../ipc/client.ts'
 import { boot, handleEvents } from '../state/actions.ts'
 import { useStore } from '../state/store.ts'
 import { HelpDialog } from '../help/HelpDialog.tsx'
+import { ImplementDialog } from '../ai/ImplementDialog.tsx'
 import { Toasts } from './Toasts.tsx'
 import { Welcome } from './Welcome.tsx'
 import { Workspace } from './Workspace.tsx'
@@ -25,6 +26,7 @@ export function App(): React.JSX.Element {
         {!ready ? null : hasProject ? <Workspace /> : <Welcome />}
       </div>
       {ready && <HelpDialog />}
+      {ready && <ImplementDialog />}
       <Toasts />
     </Tooltip.Provider>
   )

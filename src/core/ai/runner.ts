@@ -30,7 +30,11 @@ import type { Model } from '../../shared/model/schema.ts'
 import { MCP_SERVER_NAME, MCP_TOKEN_ENV } from './mcp-host.ts'
 import type { McpHost, McpRoute } from './mcp-host.ts'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { IMPLEMENT_BRIEF, SYSTEM_BRIEF, defaultRequest, firstPrompt } from './prompts.ts'
+import { BUILD_BRIEF, IMPLEMENT_BRIEF, SYSTEM_BRIEF, buildPrompt, defaultRequest, firstPrompt } from './prompts.ts'
+import { prepareGit, removeWorktree, slugify, uncommitted } from './git-prep.ts'
+import { savePlanFile } from './plans.ts'
+import type { AllowRule } from '../../shared/events.ts'
+import type { AiImplementRequest, ImplementSettings } from '../../shared/ipc.ts'
 import { implementContext } from './implement.ts'
 import type { ProposalStore } from './proposals.ts'
 import type { Providers } from './providers.ts'
@@ -93,9 +97,15 @@ interface RunState {
   proposalSeq: number
   emitTimer: ReturnType<typeof setTimeout> | null
   draftTimer: ReturnType<typeof setTimeout> | null
+  /** Implementing: "Allow for this run" grants, carried into follow-ups. */
+  allowRules?: AllowRule[]
+  /** Implementing: approval requests decline themselves when nobody answers. */
+  askTimers?: Map<string, ReturnType<typeof setTimeout>>
 }
 
 const ASK_TIMEOUT_MS = 30_000
+/** Tools whose finished calls mean a file changed (Claude's names, and Codex's file changes). */
+const EDIT_TOOLS = /^(Edit|Write|MultiEdit|NotebookEdit|edit)$/
 /** Import deep dives: at most this many services, this many CLIs at once. */
 const DEEP_DIVE_MAX = 12
 const DEEP_DIVE_PARALLEL = 3
@@ -114,6 +124,10 @@ export interface AiRunnerDeps {
   localRepoPaths: (projectId: string) => Readonly<Record<string, string>>
   /** The Notion MCP server this machine publishes through (null: none chosen). */
   notionServer: (projectId: string) => string | null
+  /** How Implement works on this machine (Settings → AI → Implementing). */
+  implementSettings: () => ImplementSettings
+  /** "Remember" in the Implement dialog: keep these as this machine's defaults. */
+  rememberImplement: (p: Pick<ImplementSettings, 'approvals' | 'git'>) => Promise<void>
 }
 
 /** No output for this long marks a run as quiet ("no output for N minutes"). */
@@ -187,7 +201,9 @@ export class AiRunner {
     const repos = await this.#localRepos(session.root, session.model)
     for (const c of saved.slice(0, KEEP_PER_PROJECT)) {
       if (this.#runs.has(c.view.id)) continue
-      const v: AiRunView = { ...c.view, quietSince: null, phase: null, questions: null }
+      // Older saves lack the newer fields.
+      const old: Partial<AiRunView> = c.view
+      const v: AiRunView = { ...c.view, planPath: old.planPath ?? null, build: old.build ?? null, quietSince: null, waiting: null, asks: [], phase: null, questions: null }
       if (v.status === 'running' || v.status === 'starting') {
         v.status = 'cancelled'
         v.error = 'Interrupted: Harpoon closed while this was running. Reply to continue.'
@@ -276,7 +292,7 @@ export class AiRunner {
     }, 400)
   }
 
-  async start(req: AiStartRequest): Promise<AiRunView> {
+  async start(req: AiStartRequest, preset?: { plan: string }): Promise<AiRunView> {
     const session = this.#o.projects.require()
     const meta = session.model.meta
     const resolved = await resolveRepos(session.root, meta.repos, this.#o.localRepoPaths(meta.id))
@@ -303,6 +319,10 @@ export class AiRunner {
         tools,
         plan: null,
         quietSince: null,
+        waiting: null,
+        planPath: null,
+        asks: [],
+        build: null,
         mode: req.mode,
         status: 'starting',
         title: req.prompt.trim().split('\n')[0]?.slice(0, 80) || defaultTitle(req.mode),
@@ -390,8 +410,117 @@ export class AiRunner {
     }
     const missing = resolved.filter((r) => r.path === null && (picked === null || picked.has(r.id))).map((r) => meta.repos.find((x) => x.id === r.id)?.name ?? r.id)
     if (missing.length > 0) this.#activity(state, 'repos', `Not cloned on this machine, so not read: ${missing.join(', ')} (locate them in Project settings)`, 'failed')
+    if (preset !== undefined) {
+      // The plan exists already (kept on a decision): the conversation starts with it, ready to implement.
+      const v = state.view
+      v.plan = preset.plan
+      state.planSaved = preset.plan
+      v.turns = [{ role: 'user', text: `The implementation plan for ${planLabel || 'this change'}` }, { role: 'assistant', text: preset.plan }]
+      v.title = `Implement: ${planLabel || 'plan'}`.slice(0, 80)
+      v.status = 'done'
+      this.#emit(state, true)
+      return v
+    }
     void this.#job(state, prompt, false)
     return state.view
+  }
+
+  /** Save a conversation's plan, or a decision's, as Markdown in the plans folder; returns the file's path. */
+  async savePlan(r: { runId?: string; decisionId?: string }): Promise<{ path: string }> {
+    const root = this.#o.projects.require().root
+    const plansDir = this.#o.implementSettings().plansDir
+    if (r.runId !== undefined) {
+      const s = this.#runs.get(r.runId)
+      if (s === undefined) throw new HarpoonError('NOT_FOUND', 'That conversation is gone.')
+      if (s.view.plan === null) throw new HarpoonError('VALIDATION', 'There is no plan to save yet.')
+      const path = await savePlanFile({ root, plansDir, title: s.view.title.replace(/^(Plan|Implement):\s*/, ''), markdown: s.view.plan })
+      s.view.planPath = path
+      this.#emit(s, true)
+      return { path }
+    }
+    const d = (await listCollection(root, 'decisions')).find((x) => x.id === r.decisionId)
+    if (d === undefined) throw new HarpoonError('NOT_FOUND', 'That decision is gone.')
+    if (d.implementationPlan.trim() === '') throw new HarpoonError('VALIDATION', 'This decision has no implementation plan yet.')
+    return { path: await savePlanFile({ root, plansDir, title: `${String(d.number).padStart(4, '0')} ${d.title}`, markdown: d.implementationPlan }) }
+  }
+
+  /**
+   * Carry out a plan: the CLI edits a repository (the one picked, or the project folder) with the approvals the user
+   * chose, after git is set up as Settings say. Continues the plan's conversation, or starts one for a decision's plan.
+   */
+  async implement(req: AiImplementRequest): Promise<AiRunView> {
+    let s: RunState | undefined
+    if (req.runId !== undefined) {
+      s = this.#runs.get(req.runId)
+      if (s === undefined) throw new HarpoonError('NOT_FOUND', 'That conversation is gone.')
+      if (s.view.status === 'running' || s.view.status === 'starting') throw new HarpoonError('CONFLICT', 'Wait for the current answer first.')
+      if (s.view.plan === null) throw new HarpoonError('VALIDATION', 'There is no plan to implement yet.')
+      await this.#revive(s)
+    } else if (req.decisionId !== undefined) {
+      const root = this.#o.projects.require().root
+      const d = (await listCollection(root, 'decisions')).find((x) => x.id === req.decisionId)
+      if (d === undefined) throw new HarpoonError('NOT_FOUND', 'That decision is gone.')
+      if (d.implementationPlan.trim() === '') throw new HarpoonError('VALIDATION', 'Plan the implementation first.')
+      if (req.vendor === undefined) throw new HarpoonError('VALIDATION', 'Pick Claude Code or Codex.')
+      const view = await this.start(
+        { vendor: req.vendor, model: req.model ?? null, effort: req.effort ?? null, mode: 'implement', prompt: '', selection: { nodeIds: [], connectorIds: [], focusId: null }, context: { decisionId: d.id } },
+        { plan: d.implementationPlan },
+      )
+      s = this.#runs.get(view.id)
+    }
+    if (s === undefined) throw new HarpoonError('VALIDATION', 'Say which plan to implement.')
+    const v = s.view
+    const session = this.#o.projects.require()
+    const repo = req.repoId === null ? { name: 'the project folder', path: session.root } : s.repos.find((r) => r.id === req.repoId)
+    if (repo === undefined) throw new HarpoonError('VALIDATION', 'That repository is not on this machine. Locate it in Project settings → Repositories.')
+    const settings = this.#o.implementSettings()
+    const prep = await prepareGit({ repo: repo.path, policy: req.git, template: settings.branchTemplate, slug: slugify(v.title.replace(/^(Plan|Implement):\s*/, '')), ...(req.force === true ? { force: true } : {}) })
+    if (req.remember === true) await this.#o.rememberImplement({ approvals: req.approvals, git: req.git })
+    v.build = { repoName: repo.name, cwd: prep.cwd, repoPath: repo.path, approvals: req.approvals, git: req.git, branch: prep.branch, worktree: prep.worktree, changedFiles: [] }
+    // Its own CLI session (edits allowed), with the plan in the first message.
+    s.sessionId = undefined
+    s.allowRules = []
+    v.turns.push({ role: 'user', text: `Implement this plan in ${repo.name}${prep.branch !== null ? ` (branch ${prep.branch})` : ''}.` })
+    v.questions = null
+    v.status = 'starting'
+    v.error = null
+    if (prep.worktree !== null) this.#activity(s, 'git', `Working in a new worktree: ${prep.worktree}`, 'ok')
+    else if (prep.branch !== null && req.git === 'branch') this.#activity(s, 'git', `Created the branch ${prep.branch}`, 'ok')
+    this.#emit(s, true)
+    void this.#job(s, buildPrompt({ repoName: repo.name, cwd: prep.cwd, git: prep.instruction, plan: v.plan ?? '', planPath: v.planPath }), false)
+    return v
+  }
+
+  /** Answer an Implement run's approval request. */
+  answer(runId: string, requestId: string, decision: 'allow' | 'allow-session' | 'deny'): void {
+    const s = this.#runs.get(runId)
+    const h = s === undefined ? undefined : [...s.handles][0]
+    if (s === undefined || h === undefined || !s.view.asks.some((a) => a.requestId === requestId)) throw new HarpoonError('NOT_FOUND', 'That request is no longer waiting.')
+    this.#answerAsk(s, h, requestId, decision)
+  }
+
+  #answerAsk(s: RunState, h: RunHandle, requestId: string, decision: 'allow' | 'allow-session' | 'deny'): void {
+    const i = s.view.asks.findIndex((a) => a.requestId === requestId)
+    if (i < 0) return
+    const [ask] = s.view.asks.splice(i, 1)
+    clearTimeout(s.askTimers?.get(requestId))
+    s.askTimers?.delete(requestId)
+    this.#o.providers.adapter(s.view.vendor).answer(h, requestId, decision)
+    if (ask !== undefined) this.#activity(s, 'approval', `${decision === 'deny' ? 'Declined' : decision === 'allow-session' ? 'Allowed for this run' : 'Allowed'}: ${ask.detail.slice(0, 160)}`, decision === 'deny' ? 'failed' : 'ok')
+    this.#emit(s, true)
+  }
+
+  /** Remove the worktree an Implement run worked in (its branch stays); follow-ups then work in the repository. */
+  async removeWorktree(runId: string): Promise<void> {
+    const s = this.#runs.get(runId)
+    const b = s?.view.build
+    if (s === undefined || b === undefined || b === null || b.worktree === null) throw new HarpoonError('NOT_FOUND', 'This conversation has no worktree.')
+    if (s.handles.size > 0) throw new HarpoonError('CONFLICT', 'Stop the conversation first.')
+    await removeWorktree(b.repoPath, b.worktree)
+    this.#activity(s, 'git', `Removed the worktree ${b.worktree} (the branch ${b.branch ?? ''} stays)`, 'ok')
+    b.worktree = null
+    b.cwd = b.repoPath
+    this.#emit(s, true)
   }
 
   /**
@@ -449,6 +578,10 @@ export class AiRunner {
         tools: [],
         plan: null,
         quietSince: null,
+        waiting: null,
+        planPath: null,
+        asks: [],
+        build: null,
         mode: 'plan',
         status: 'running',
         title: 'Outside agent',
@@ -519,21 +652,7 @@ export class AiRunner {
     const s = this.#runs.get(runId)
     if (s === undefined) throw new HarpoonError('NOT_FOUND', 'That conversation is gone.')
     if (s.view.status === 'running' || s.view.status === 'starting') throw new HarpoonError('CONFLICT', 'Wait for the current answer first.')
-    // A conversation from an earlier session: a fresh draft from the diagram as it is now (its proposal, if still
-    // pending, stays as it was), the comparison's options again, and the project folder and repos as they are now.
-    if (s.restored === true) {
-      const session = this.#o.projects.require()
-      s.restored = false
-      s.draft = new Draft(session.model)
-      s.base = session.model
-      s.view.proposalId = null
-      s.cwd = session.root
-      s.repos = await this.#localRepos(session.root, session.model)
-      if (s.view.mode === 'solutions' && s.view.solutionSetId !== null) {
-        await this.#loadOptions(s, s.view.solutionSetId)
-        s.draft = switchableDraft(() => s.options[s.active]?.draft ?? new Draft(session.model))
-      }
-    }
+    await this.#revive(s)
     // A follow-up may bring tools the conversation did not have (accept a plan, then "create a Linear issue for it").
     if (tools !== undefined && s.view.mode !== 'publish') {
       const checked = await checkUserTools(s.view.vendor, tools).catch((err: unknown) => {
@@ -581,6 +700,25 @@ The user adds: `
     return s.view
   }
 
+  /**
+   * A conversation from an earlier session: a fresh draft from the diagram as it is now (its proposal, if still
+   * pending, stays as it was), the comparison's options again, and the project folder and repos as they are now.
+   */
+  async #revive(s: RunState): Promise<void> {
+    if (s.restored !== true) return
+    const session = this.#o.projects.require()
+    s.restored = false
+    s.draft = new Draft(session.model)
+    s.base = session.model
+    s.view.proposalId = null
+    s.cwd = session.root
+    s.repos = await this.#localRepos(session.root, session.model)
+    if (s.view.mode === 'solutions' && s.view.solutionSetId !== null) {
+      await this.#loadOptions(s, s.view.solutionSetId)
+      s.draft = switchableDraft(() => s.options[s.active]?.draft ?? new Draft(session.model))
+    }
+  }
+
   cancel(runId: string): void {
     const s = this.#runs.get(runId)
     if (s === undefined || s.handles.size === 0) return
@@ -605,7 +743,11 @@ The user adds: `
     try {
       await this.#openRoute(s)
       if (v.mode === 'import' && !resume) await this.#importJob(s, prompt)
-      else if (v.mode === 'implement' && v.plan === null && !resume) {
+      else if (v.build !== null) {
+        v.phase = `Implementing in ${v.build.repoName}`
+        await this.#runPass(s, { prompt, resume, quiet: false, label: null, build: true })
+        await this.#afterBuild(s)
+      } else if (v.mode === 'implement' && v.plan === null && !resume) {
         // The CLI's own plan mode writes the plan (Claude Code's plan mode, Codex's plan collaboration mode).
         v.phase = 'Planning in the CLI’s plan mode'
         await this.#runPass(s, { prompt, resume: false, quiet: false, label: null, native: true })
@@ -844,7 +986,7 @@ The user adds: `
   }
 
   /** Run one CLI pass against the run's draft. Quiet passes (import deep dives) report only activity. */
-  async #runPass(s: RunState, o: { prompt: string; resume: boolean; quiet: boolean; label: string | null; native?: boolean }): Promise<void> {
+  async #runPass(s: RunState, o: { prompt: string; resume: boolean; quiet: boolean; label: string | null; native?: boolean; build?: boolean }): Promise<void> {
     const v = s.view
     const route = s.route
     const configFile = s.configFile
@@ -853,22 +995,27 @@ The user adds: `
     // The probe teaches the adapter the account's facts (Codex: which models it may run).
     await this.#o.providers.probe(v.vendor).catch(() => undefined)
     const native = o.native === true
+    // Implementing: edits in the build's folder (the project, its other repos and the saved plan stay readable).
+    const build = o.build === true ? v.build : null
+    const cwd = build?.cwd ?? s.cwd
+    const readable = [...new Set([...(build !== null ? [s.cwd] : []), ...s.repos.map((r) => r.path), ...(build !== null && v.planPath !== null ? [dirname(v.planPath)] : [])])]
     const handle = adapter.start({
       runId: v.id,
-      step: native ? 'plan' : 'design',
-      cwd: s.cwd,
-      readDirs: s.repos.map((r) => r.path).filter((p) => resolve(p) !== resolve(s.cwd)),
-      prompt: native ? o.prompt : o.prompt + toolsNote(v.mode, v.tools),
-      ...(o.resume ? {} : { systemAppend: native ? IMPLEMENT_BRIEF : SYSTEM_BRIEF }),
+      step: build !== null ? 'implement' : native ? 'plan' : 'design',
+      cwd,
+      readDirs: readable.filter((p) => resolve(p) !== resolve(cwd)),
+      prompt: native || build !== null ? o.prompt : o.prompt + toolsNote(v.mode, v.tools),
+      ...(o.resume ? {} : { systemAppend: build !== null ? BUILD_BRIEF : native ? IMPLEMENT_BRIEF : SYSTEM_BRIEF }),
       model: v.model,
       effort: v.effort,
-      mode: 'readonly',
+      mode: build !== null ? 'autoedit' : 'readonly',
+      ...(build !== null ? { approvals: build.approvals } : {}),
       planNative: native,
-      allowRules: [],
+      allowRules: build !== null ? (s.allowRules ?? []) : [],
       trustFolder: false,
-      askTimeoutMs: ASK_TIMEOUT_MS,
+      askTimeoutMs: build !== null ? this.#o.implementSettings().askTimeoutMin * 60_000 : ASK_TIMEOUT_MS,
       ephemeral: false,
-      ...(native
+      ...(native || build !== null
         ? {}
         : {
       mcp: {
@@ -899,6 +1046,22 @@ The user adds: `
     // Claude reports its MCP servers in its init frame; a failed connection would otherwise end "successfully" with
     // an answer that never touched the diagram.
     handle.onSignal((sig) => {
+      if (sig.type === 'ask-withdrawn') {
+        v.asks = v.asks.filter((a) => a.requestId !== sig.requestId)
+        clearTimeout(s.askTimers?.get(sig.requestId))
+        this.#emit(s, true)
+        return
+      }
+      if (sig.type === 'allow-rule') {
+        s.allowRules = [...(s.allowRules ?? []), sig.rule]
+        return
+      }
+      // Background shells or sub-agents still run after an answer: the conversation waits for them, then goes on.
+      if (sig.type === 'waiting') {
+        v.waiting = sig.tasks.length > 0 ? sig.tasks : null
+        this.#emit(s, true)
+        return
+      }
       // The plan the CLI's plan mode presented: it is the answer (and goes on the decision when there is one).
       if (sig.type === 'plan-captured') {
         v.plan = sig.markdown
@@ -906,6 +1069,11 @@ The user adds: `
         if (last?.role === 'assistant') last.text = sig.markdown
         else v.turns.push({ role: 'assistant', text: sig.markdown })
         this.#emit(s, true)
+        return
+      }
+      // Auto mode is not offered for every model (Claude Code falls back to asking for everything): say so.
+      if (sig.type === 'meta' && sig.key === 'permissionMode' && v.build?.approvals === 'auto' && sig.value !== 'auto' && !s.view.activity.some((a) => a.name === 'approvals')) {
+        this.#activity(s, 'approvals', `Auto mode is not available with this model, so ${v.vendor === 'claude' ? 'Claude Code' : 'the CLI'} asks before acting (mode “${String(sig.value)}”). Pick a model that supports it, or answer the requests here.`, 'failed')
         return
       }
       if (sig.type !== 'meta' || sig.key !== 'mcp_servers' || !Array.isArray(sig.value)) return
@@ -916,6 +1084,11 @@ The user adds: `
       }
     })
     await handle.exited
+    v.waiting = null
+    // Requests still waiting went with the process.
+    for (const t of s.askTimers?.values() ?? []) clearTimeout(t)
+    s.askTimers?.clear()
+    v.asks = []
     // Any CLI: a pass that should have used the diagram tools but never reached them.
     if (fatal === null && s.harpoonCalls === toolCallsBefore && !s.cancelled && v.mode !== 'explain' && v.mode !== 'implement') {
       fatal = `${v.vendor === 'claude' ? 'Claude' : 'Codex'} finished without using Harpoon's tools, so nothing was staged. It may not have connected to them; try again, or check the CLI's MCP settings.`
@@ -983,13 +1156,28 @@ The user adds: `
           existing.status = status
           if (summary !== '') existing.summary = summary
         } else v.activity.push({ id, name: planHandOff ? 'plan' : e.name, summary, status })
+        // Implementing: the files the CLI reports editing (git status replaces this when the pass ends).
+        if (v.build !== null && e.phase === 'end' && status === 'ok' && EDIT_TOOLS.test(e.name) && summary !== '') {
+          const files = existing?.summary ?? summary
+          for (const f of files.split(/,\s*/)) if (f !== '' && !v.build.changedFiles.includes(f)) v.build.changedFiles.push(f)
+        }
         if (v.activity.length > 600) v.activity.splice(0, v.activity.length - 600)
         break
       }
-      case 'ask':
+      case 'ask': {
         // Read-only passes never need permission; refuse anything that asks.
-        this.#o.providers.adapter(v.vendor).answer(handle, e.requestId, 'deny')
+        if (v.build === null) {
+          this.#o.providers.adapter(v.vendor).answer(handle, e.requestId, 'deny')
+          break
+        }
+        // Implementing: the user decides (unanswered requests are declined when they expire).
+        v.asks.push({ requestId: e.requestId, kind: e.kind, detail: e.detail, reason: e.reason ?? null, allowSession: e.allowSession, expiresAt: e.expiresAt })
+        s.askTimers ??= new Map()
+        const timer = setTimeout(() => this.#answerAsk(s, handle, e.requestId, 'deny'), Math.max(1000, e.expiresAt - Date.now()))
+        timer.unref()
+        s.askTimers.set(e.requestId, timer)
         break
+      }
       case 'done':
         if (e.usage !== undefined) {
           const prev = v.usage ?? { input: 0, output: 0, costUsd: null }
@@ -1182,6 +1370,16 @@ The user adds: `
     }
     await writeNote(root, path, meta, doc.body)
     this.#o.bus.emit({ kind: 'notes', path })
+  }
+
+  /** After an Implement pass: what changed in the repository (uncommitted files), as git sees it. */
+  async #afterBuild(s: RunState): Promise<void> {
+    const b = s.view.build
+    if (b === null) return
+    const files = await uncommitted(b.cwd).catch(() => null)
+    if (files !== null) b.changedFiles = files
+    if (b.changedFiles.length > 0) this.#activity(s, 'changes', `${b.changedFiles.length} changed file${b.changedFiles.length === 1 ? '' : 's'} in ${b.repoName}`, 'ok')
+    this.#emit(s, true)
   }
 
   /** A plan for a decision is kept on it ("Implementation plan"). */

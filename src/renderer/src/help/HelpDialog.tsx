@@ -152,6 +152,14 @@ function Page({ topic }: { topic: HelpTopic }): React.JSX.Element {
             refine it or, with Tools, turn it into issues.
           </P>
           <P>
+            With a plan in hand, <B>Save plan</B> writes it as Markdown to <code>.harpoon/plans</code> in the project (change the folder in Settings → AI → Implementing), and{' '}
+            <B>Implement this plan</B> has the CLI carry it out in the repository you pick. Choose how much it asks first: <B>Manual</B> (every edit and command),{' '}
+            <B>Accept edits</B> (edits freely, asks before commands) or <B>Auto</B> (the CLI&apos;s own judgement: Claude Code&apos;s auto mode, Codex&apos;s approve-for-me).
+            Requests appear in the conversation to allow or deny. For git it follows the repository&apos;s own instructions (CLAUDE.md, AGENTS.md, skills) by default, or
+            creates a branch, or works in a separate worktree; it never pushes unless those instructions say to. When background work it started (a long test run, a sub-agent)
+            is still going, the conversation waits for it and carries on.
+          </P>
+          <P>
             Conversations are kept on this computer for each project (the latest 50, never in the project folder), so they are still there after you close
             Harpoon; replying continues the CLI&apos;s own session. Delete one, or clear the history, from the conversation list.
             Keep talking after a run: the box below the conversation follows up in the same session, so the AI remembers the plan you accepted. <B>Tools</B> beside it lets

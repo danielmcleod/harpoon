@@ -3,7 +3,8 @@
 import type { DecisionRecord, SolutionSet, SourceRef } from '@shared/ipc.ts'
 import { draftFromSet } from '@shared/model/decisions.ts'
 import { acceptProposal, ask, discardProposal } from '../state/ai.ts'
-import { toast } from '../state/actions.ts'
+import { edit, toast } from '../state/actions.ts'
+import type { Op } from '@shared/model/ops.ts'
 import { getState, setAi, setUi } from '../state/store.ts'
 import { nextAdrNumber, putDecision, putSet, today, useRecords } from './recordsStore.ts'
 
@@ -93,6 +94,22 @@ export async function draftWithAi(rec: DecisionRecord, extra = ''): Promise<void
   }
   if (extra.trim() !== '') lines.push(`Notes:\n${extra}`)
   await ask(lines.join('\n\n'), { fresh: true, mode: 'decision', context: { decisionId: rec.id, ...(rec.solutionSetId !== null ? { solutionSetId: rec.solutionSetId } : {}) } })
+}
+
+/** The parts a decision is about that are planned or being built become existing (one undoable edit). */
+export function markBuilt(entityIds: readonly string[]): void {
+  const model = getState().project?.model
+  if (model === undefined) return
+  const ops: Op[] = []
+  for (const id of entityIds) {
+    const n = model.nodes[id]
+    if (n !== undefined && (n.status === 'planned' || n.status === 'in-progress')) ops.push({ op: 'updateNode', id, patch: { status: 'existing' } })
+    const c = model.connectors[id]
+    if (c !== undefined && (c.status === 'planned' || c.status === 'in-progress')) ops.push({ op: 'updateConnector', id, patch: { status: 'existing' } })
+  }
+  if (ops.length === 0) return toast('Nothing here is planned or in progress any more.')
+  edit(ops, { label: 'mark as built' })
+  toast(`Marked ${ops.length} part${ops.length === 1 ? '' : 's'} as built.`)
 }
 
 /** Have the CLI's own plan mode plan how to build a decision (or an accepted proposal) in the codebase. */

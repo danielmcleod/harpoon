@@ -19,6 +19,14 @@ export const READONLY_PASSES = ['plan', 'review', 'critic'] as const satisfies r
 export const MODES = ['readonly', 'autoedit', 'full'] as const
 export type Mode = (typeof MODES)[number]
 
+/**
+ * How an edit pass asks before acting (Harpoon's Implement): `manual` asks for every edit and command,
+ * `acceptEdits` edits freely and asks before commands, `auto` lets the CLI's own reviewer decide (Claude's auto
+ * mode, Codex's auto_review). Never bypass or full access.
+ */
+export const APPROVALS = ['manual', 'acceptEdits', 'auto'] as const
+export type Approvals = (typeof APPROVALS)[number]
+
 /** Execution order. `:` in a key must go through `fileSafe()` before it reaches a path. */
 export const STEP_KEYS = [
   'preflight',

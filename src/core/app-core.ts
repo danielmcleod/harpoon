@@ -58,7 +58,7 @@ export async function createCore(o: CoreOptions): Promise<Core> {
   const proposals = new ProposalStore({ bus, log: o.log.child('proposals'), projects })
   const providers = new Providers({ probeCwd: join(paths.tmpDir, 'probe-cwd'), log: o.log.child('providers') })
   const mcp = new McpHost(o.log.child('mcp'))
-  const ai = new AiRunner({ providers, mcp, bus, log: o.log.child('ai'), projects, proposals, runsDir: paths.runsDir, conversations: new ConversationStore(join(paths.home, 'conversations')), localRepoPaths: (id) => state.state.repoPaths[id] ?? {}, notionServer: (id) => state.state.notionServers[id] ?? null })
+  const ai = new AiRunner({ providers, mcp, bus, log: o.log.child('ai'), projects, proposals, runsDir: paths.runsDir, conversations: new ConversationStore(join(paths.home, 'conversations')), localRepoPaths: (id) => state.state.repoPaths[id] ?? {}, notionServer: (id) => state.state.notionServers[id] ?? null, implementSettings: () => state.state.implement, rememberImplement: async (p) => void (await state.patch({ implement: { ...state.state.implement, ...p } })) })
   const external = new ExternalMcp({ state, ai, log: o.log.child('external-mcp'), bridge: o.bridge ?? null })
   await external.start()
   bus.on((e) => {
@@ -110,6 +110,10 @@ export async function createCore(o: CoreOptions): Promise<Core> {
     'ai.clear': () => ai.clear(),
     'ai.cancel': (r) => Promise.resolve(ai.cancel(r.runId)),
     'ai.runs': () => Promise.resolve(ai.list()),
+    'ai.savePlan': (r) => ai.savePlan(r),
+    'ai.implement': (r) => ai.implement(r),
+    'ai.answer': (r) => Promise.resolve(ai.answer(r.runId, r.requestId, r.decision)),
+    'ai.removeWorktree': (r) => ai.removeWorktree(r.runId),
     'proposal.list': () => Promise.resolve(proposals.list()),
     'proposal.accept': (r) => proposals.accept(r.id, r.opIndexes, r.asPlanned === true, r.phase ?? null),
     'proposal.discard': (r) => proposals.discard(r.id),

@@ -94,6 +94,7 @@ export class CodexExecRun extends CodexRunBase {
       cwd: o.cwd,
       model: o.model,
       effort: o.effort,
+      approvals: o.approvals,
       outFile,
       schemaFile,
       resumeId: this.resumeId,

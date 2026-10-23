@@ -4,8 +4,9 @@ import { rename } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { z } from 'zod'
-import type { AiDefaults, AppState, AppStatePatch, RecentProject } from '../shared/ipc.ts'
-import { AI_VENDORS, NODE_STYLES, THEMES } from '../shared/ipc.ts'
+import type { AiDefaults, AppState, AppStatePatch, ImplementSettings, RecentProject } from '../shared/ipc.ts'
+import { AI_VENDORS, GIT_POLICIES, NODE_STYLES, THEMES } from '../shared/ipc.ts'
+import { APPROVALS } from '../shared/run.ts'
 import { readJsonFile, writeJsonAtomic } from './store/atomic.ts'
 
 export const RECENT_MAX = 12
@@ -18,6 +19,16 @@ export const DEFAULT_EXTERNAL_MCP_PORT = 47821
 
 const DEFAULT_AI: AiDefaults = { vendor: null, claude: { model: null, effort: null }, codex: { model: null, effort: null } }
 
+export const DEFAULT_PLANS_DIR = '.harpoon/plans'
+
+export const DEFAULT_IMPLEMENT: ImplementSettings = {
+  approvals: 'acceptEdits',
+  git: 'repo',
+  branchTemplate: 'harpoon/{slug}',
+  plansDir: DEFAULT_PLANS_DIR,
+  askTimeoutMin: 30,
+}
+
 export const DEFAULT_APP_STATE: AppState = {
   schemaVersion: 1,
   theme: 'dark',
@@ -28,6 +39,7 @@ export const DEFAULT_APP_STATE: AppState = {
   notionServers: {},
   ai: DEFAULT_AI,
   externalMcp: { enabled: false, port: DEFAULT_EXTERNAL_MCP_PORT, token: null },
+  implement: DEFAULT_IMPLEMENT,
 }
 
 const PickZ = z.object({ model: z.string().max(200).nullable().catch(null), effort: z.string().max(20).nullable().catch(null) }).catch({ model: null, effort: null })
@@ -48,6 +60,16 @@ const AppStateZ = z.object({
     .object({ enabled: z.boolean().catch(false), port: z.number().int().min(1024).max(65535).catch(DEFAULT_EXTERNAL_MCP_PORT), token: z.string().min(32).max(200).nullable().catch(null) })
     .catch({ enabled: false, port: DEFAULT_EXTERNAL_MCP_PORT, token: null })
     .default({ enabled: false, port: DEFAULT_EXTERNAL_MCP_PORT, token: null }),
+  implement: z
+    .object({
+      approvals: z.enum(APPROVALS).catch(DEFAULT_IMPLEMENT.approvals),
+      git: z.enum(GIT_POLICIES).catch(DEFAULT_IMPLEMENT.git),
+      branchTemplate: z.string().min(1).max(200).catch(DEFAULT_IMPLEMENT.branchTemplate),
+      plansDir: z.string().min(1).max(1000).catch(DEFAULT_PLANS_DIR),
+      askTimeoutMin: z.number().int().min(1).max(240).catch(DEFAULT_IMPLEMENT.askTimeoutMin),
+    })
+    .catch(DEFAULT_IMPLEMENT)
+    .default(DEFAULT_IMPLEMENT),
 })
 
 export class AppStateStore {
@@ -83,6 +105,7 @@ export class AppStateStore {
       ...(p.nodeStyle !== undefined ? { nodeStyle: p.nodeStyle } : {}),
       ...(p.designsDir !== undefined ? { designsDir: p.designsDir } : {}),
       ...(p.ai !== undefined ? { ai: p.ai } : {}),
+      ...(p.implement !== undefined ? { implement: p.implement } : {}),
     }
     await writeJsonAtomic(this.#file, this.#state)
     return this.#state

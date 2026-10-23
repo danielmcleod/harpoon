@@ -13,6 +13,7 @@ import {
   MANAGED_FLAGS,
 } from './capabilities.ts'
 import type { SandboxMode } from './wire.ts'
+import type { Approvals } from '../../../shared/run.ts'
 
 /** Codex's built-in server for the apps connected to the account (it is not in config.toml). */
 export const CODEX_APPS = 'codex_apps'
@@ -117,13 +118,20 @@ export const isReadOnlyStep = (step: StartStep): boolean => READ_ONLY_STEPS.incl
 export function sandboxFor(
   step: StartStep,
   mode: 'readonly' | 'autoedit' | 'full',
+  approvals?: Approvals,
 ): {
   sandbox: SandboxMode
-  approvalPolicy: 'never' | 'on-request'
+  approvalPolicy: 'never' | 'on-request' | 'untrusted'
+  /** Who answers the pass's approval requests: the user, or Codex's own reviewer (Harpoon's Auto). */
+  reviewer: 'user' | 'auto_review'
 } {
-  if (isReadOnlyStep(step) || mode === 'readonly') return { sandbox: 'read-only', approvalPolicy: 'never' }
-  if (mode === 'full') return { sandbox: 'danger-full-access', approvalPolicy: 'never' }
-  return { sandbox: 'workspace-write', approvalPolicy: 'on-request' }
+  if (isReadOnlyStep(step) || mode === 'readonly') return { sandbox: 'read-only', approvalPolicy: 'never', reviewer: 'user' }
+  // Harpoon's Implement: never full access; manual asks before anything not known safe, auto lets Codex review.
+  if (approvals === 'manual') return { sandbox: 'workspace-write', approvalPolicy: 'untrusted', reviewer: 'user' }
+  if (approvals === 'auto') return { sandbox: 'workspace-write', approvalPolicy: 'on-request', reviewer: 'auto_review' }
+  if (approvals === 'acceptEdits') return { sandbox: 'workspace-write', approvalPolicy: 'on-request', reviewer: 'user' }
+  if (mode === 'full') return { sandbox: 'danger-full-access', approvalPolicy: 'never', reviewer: 'user' }
+  return { sandbox: 'workspace-write', approvalPolicy: 'on-request', reviewer: 'user' }
 }
 
 /** Ephemeral threads cannot be resumed: only read-only steps, never Implement or Fix. */
@@ -192,6 +200,7 @@ export function appServerArgv(o: {
 export interface ExecArgvInput {
   step: StartStep
   mode: 'readonly' | 'autoedit' | 'full'
+  approvals?: Approvals | undefined
   cwd: string
   model?: string | null | undefined
   effort?: string | null | undefined
@@ -215,7 +224,7 @@ export interface ExecArgvInput {
  * `--approve-for-me`, `--oss` or `--local-provider`, and never `--ephemeral` on Implement or Fix.
  */
 export function execArgv(i: ExecArgvInput): string[] {
-  const { sandbox } = sandboxFor(i.step, i.mode)
+  const { sandbox, reviewer } = sandboxFor(i.step, i.mode, i.approvals)
   // The pass's own model first, else the local preset's (params.ts modelOf).
   const model = i.model !== undefined && i.model !== null && i.model.trim() !== '' ? i.model : i.local?.model
   const a = [
@@ -230,7 +239,7 @@ export function execArgv(i: ExecArgvInput): string[] {
     '--cd',
     i.cwd,
     '-c',
-    `approvals_reviewer=${tomlString('user')}`,
+    `approvals_reviewer=${tomlString(reviewer)}`,
   ]
   if (model !== undefined) a.push('-m', model)
   if (i.effort !== undefined && i.effort !== null && /^[a-z]+$/.test(i.effort)) a.push('-c', `model_reasoning_effort=${tomlString(i.effort)}`)

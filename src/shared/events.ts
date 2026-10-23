@@ -96,6 +96,7 @@ export const ADAPTER_SIGNAL_TYPES = [
   'plan-captured',
   'auto-answered',
   'meta',
+  'waiting',
 ] as const
 
 /** Engine-internal; never rendered directly. */
@@ -106,5 +107,7 @@ export type AdapterSignal =
   | { type: 'plan-captured'; markdown: string; source: PlanCaptureSource }
   | { type: 'auto-answered'; requestId: string; decision: AskDecision; tool: string; why: AutoAnswerReason }
   | { type: 'meta'; key: string; value: unknown }
+  /** The CLI answered but background work it started (shells, sub-agents) still runs; the pass waits for it. */
+  | { type: 'waiting'; tasks: string[] }
 
 export type AdapterSignalType = AdapterSignal['type']
