@@ -237,7 +237,7 @@ export class ClaudeRun implements RunHandle {
       // Only the catalog step reads it (launch.ts); `true` is web search without page fetches.
       webDomains: typeof o.web === 'object' ? o.web.allowedDomains : undefined,
       mcp: o.mcp !== undefined ? { name: o.mcp.name, configFile: o.mcp.configFile, allow: o.mcp.allow, readCode: o.mcp.readCode } : undefined,
-      readDirs: o.step === 'design' ? o.readDirs : undefined,
+      readDirs: o.step === 'design' || o.step === 'plan' ? o.readDirs : undefined,
     })
     const env = claudeEnv(this.#deps.baseEnv, {
       route,

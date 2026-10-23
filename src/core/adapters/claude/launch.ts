@@ -66,7 +66,7 @@ export interface ArgvInput {
   webDomains?: readonly string[] | undefined
   /** `design` step: Harpoon's MCP server (its config file and the server name for the allow rule), plus user servers it may also use. */
   mcp?: { name: string; configFile: string; allow?: string[] | undefined; readCode?: boolean | undefined } | undefined
-  /** `design` step: more folders it may read (`--add-dir`). */
+  /** `design` and native `plan` steps: more folders it may read (`--add-dir`). */
   readDirs?: readonly string[] | undefined
 }
 
@@ -149,9 +149,15 @@ export function buildArgv(i: ArgvInput): string[] {
         '--disallowedTools',
         joinList([
           'AskUserQuestion',
+          // Sub-agents can outlive a one-shot plan pass (it ends while they still run, with no plan presented);
+          // the plan reads the code itself.
+          'Task',
+          'Agent',
           ...(i.disallowShell === true || PLAN_DISALLOWS_SHELL ? SHELL_TOOLS : []),
         ]),
       )
+      // The project's other repositories, readable as in design passes.
+      for (const d of i.readDirs ?? []) if (d !== '' && !/[\r\n\0]/.test(d)) a.push(`--add-dir=${d}`)
       break
     case 'readonly': {
       const heal = i.step === 'heal'

@@ -51,6 +51,8 @@ export async function ask(prompt: string, o: { fresh?: boolean; mode?: AiMode; c
     return
   }
   const mode = o.mode ?? ai.mode
+  // The panel shows the conversation's own mode (runs started from a button too), so its box replies to it.
+  if (mode !== ai.mode) setAi({ mode })
   // Import: the repositories picked in the panel (none picked means all of them).
   const repoIds = mode === 'import' && ai.importRepos !== null && ai.importRepos.length > 0 ? ai.importRepos : undefined
   const context: AiContext | undefined = repoIds !== undefined ? { ...o.context, repoIds } : o.context

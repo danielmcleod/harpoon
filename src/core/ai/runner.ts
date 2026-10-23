@@ -30,7 +30,7 @@ import type { Model } from '../../shared/model/schema.ts'
 import { MCP_SERVER_NAME, MCP_TOKEN_ENV } from './mcp-host.ts'
 import type { McpHost, McpRoute } from './mcp-host.ts'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { IMPLEMENT_BRIEF, SYSTEM_BRIEF, firstPrompt } from './prompts.ts'
+import { IMPLEMENT_BRIEF, SYSTEM_BRIEF, defaultRequest, firstPrompt } from './prompts.ts'
 import { implementContext } from './implement.ts'
 import type { ProposalStore } from './proposals.ts'
 import type { Providers } from './providers.ts'
@@ -65,6 +65,10 @@ interface RunState {
   allowServers?: string[]
   /** implement: the plan last saved on the decision. */
   planSaved?: string
+  /** implement: the first plan pass's prompt (decision, changes, architecture), for a plan pass started again. */
+  planPrompt?: string
+  /** When the CLI last said anything (for "no output for N minutes"). */
+  lastEventAt?: number
   /** notes mode: what the agent produced. */
   note: { summary?: string; items?: { kind: NoteItemKind; text: string; action: NoteAction }[]; agenda?: string }
   selection: AiSelection
@@ -104,6 +108,9 @@ export interface AiRunnerDeps {
 }
 
 /** For the prompt: the user's own tools this conversation has, and what they are for. */
+/** No output for this long marks a run as quiet ("no output for N minutes"). */
+const QUIET_AFTER_MS = 2 * 60_000
+
 export function toolsNote(mode: string, tools: readonly string[]): string {
   if (mode === 'publish' || tools.length === 0) return ''
   return `
@@ -126,6 +133,27 @@ export class AiRunner {
 
   constructor(o: AiRunnerDeps) {
     this.#o = o
+    // A run whose CLI has gone quiet for a while is flagged (it may be reading a large codebase, or be stuck).
+    setInterval(() => this.#watchQuiet(), 15_000).unref()
+  }
+
+  #watchQuiet(): void {
+    const now = Date.now()
+    for (const s of this.#runs.values()) {
+      const v = s.view
+      if (v.external || (v.status !== 'running' && v.status !== 'starting')) {
+        if (v.quietSince !== null) {
+          v.quietSince = null
+          this.#emit(s, true)
+        }
+        continue
+      }
+      const last = s.lastEventAt ?? v.createdAt
+      if (v.quietSince === null && now - last > QUIET_AFTER_MS) {
+        v.quietSince = last
+        this.#emit(s, true)
+      }
+    }
   }
 
   list(): AiRunView[] {
@@ -157,11 +185,13 @@ export class AiRunner {
         external: false,
         tools,
         plan: null,
+        quietSince: null,
         mode: req.mode,
         status: 'starting',
         title: req.prompt.trim().split('\n')[0]?.slice(0, 80) || defaultTitle(req.mode),
         createdAt: Date.now(),
-        turns: [{ role: 'user', text: req.prompt.trim() }],
+        // Started from a button (no typed request): say what was asked, so the conversation reads on its own.
+        turns: [{ role: 'user', text: req.prompt.trim() || defaultRequest(req.mode) }],
         activity: [],
         usage: null,
         proposalId: null,
@@ -221,15 +251,26 @@ export class AiRunner {
     // Planning the implementation: the decision and the changes it builds on go into the prompt (native plan passes
     // have no Harpoon tools to look them up).
     let planContext = ''
+    let planLabel = ''
     if (req.mode === 'implement') {
       const decision = req.context?.decisionId === undefined ? undefined : (await listCollection(session.root, 'decisions')).find((x) => x.id === req.context?.decisionId)
       const chosen = decision?.options.find((x) => x.chosen)?.proposalId ?? null
       const pid = req.context?.proposalId ?? chosen ?? undefined
       const proposal = pid === undefined ? undefined : this.#o.proposals.get(pid)
       planContext = implementContext({ model: session.model, context: req.context ?? {}, decision, proposal })
+      planLabel = decision !== undefined ? `decision ${String(decision.number).padStart(4, '0')}: ${decision.title}` : proposal !== undefined ? `“${proposal.title}”` : ''
       if (planContext === '' && req.selection.nodeIds.length === 0 && req.prompt.trim() === '') throw new HarpoonError('VALIDATION', 'Pick what to plan: a decision, an accepted proposal, or select the planned parts first.')
     }
     const prompt = firstPrompt({ mode: req.mode, prompt: req.prompt, selection: req.selection, model: session.model }) + planContext + repoBrief(session.root, repos)
+    if (req.mode === 'implement') {
+      // A reply to a plan run that ended without a plan runs plan mode again, with this context.
+      state.planPrompt = prompt
+      if (req.prompt.trim() === '' && planLabel !== '') {
+        const first = state.view.turns[0]
+        if (first !== undefined) first.text = `Plan the implementation of ${planLabel}.`
+        state.view.title = `Plan: ${planLabel}`.slice(0, 80)
+      }
+    }
     const missing = resolved.filter((r) => r.path === null && (picked === null || picked.has(r.id))).map((r) => meta.repos.find((x) => x.id === r.id)?.name ?? r.id)
     if (missing.length > 0) this.#activity(state, 'repos', `Not cloned on this machine, so not read: ${missing.join(', ')} (locate them in Project settings)`, 'failed')
     void this.#job(state, prompt, false)
@@ -289,6 +330,7 @@ export class AiRunner {
         external: true,
         tools: [],
         plan: null,
+        quietSince: null,
         mode: 'plan',
         status: 'running',
         title: 'Outside agent',
@@ -384,6 +426,11 @@ export class AiRunner {
 ${s.view.plan}
 
 The user follows up: `
+    } else if (s.view.mode === 'implement' && s.view.plan === null && s.planPrompt !== undefined) {
+      // No plan yet: plan mode runs again with the original request and what the user adds.
+      carry = `${s.planPrompt}
+
+The user adds: `
     }
     s.view.turns.push({ role: 'user', text: prompt.trim() })
     s.view.questions = null
@@ -745,6 +792,12 @@ The user follows up: `
     // A native plan pass keeps no session to resume (Claude's plan route does not persist it); follow-ups start fresh
     // and carry the plan instead.
     if (native) s.sessionId = undefined
+    // Plan mode ended without presenting a plan (it stopped, waited on something, or only explored): say so, with its
+    // last words, instead of looking finished.
+    if (native && v.plan === null && !s.cancelled && fatal === null) {
+      const said = v.turns.filter((t) => t.role === 'assistant').at(-1)?.text.trim() ?? ''
+      fatal = `${v.vendor === 'claude' ? 'Claude Code' : 'Codex'} left plan mode without presenting a plan.${said !== '' ? ` Its last message: “${said.slice(0, 300)}${said.length > 300 ? '…' : ''}”` : ''} Reply below to continue (for example “present the plan now”), or plan again.`
+    }
     if (passId !== null) {
       const a = v.activity.find((x) => x.id === passId)
       if (a !== undefined) {
@@ -767,6 +820,11 @@ The user follows up: `
 
   #onEvent(s: RunState, e: NormalizedEvent, handle: RunHandle, quiet: boolean): void {
     const v = s.view
+    s.lastEventAt = Date.now()
+    if (v.quietSince !== null) {
+      v.quietSince = null
+      this.#emit(s, true)
+    }
     switch (e.type) {
       case 'session':
         if (!quiet) s.sessionId = e.id

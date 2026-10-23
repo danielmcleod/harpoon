@@ -88,7 +88,7 @@ function conventions(mode: AiMode, m: Model): string {
     .join('\n\n')
 }
 
-function defaultRequest(mode: AiMode): string {
+export function defaultRequest(mode: AiMode): string {
   switch (mode) {
     case 'import':
       return 'Map this repository.'

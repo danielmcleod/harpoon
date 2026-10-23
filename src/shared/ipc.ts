@@ -338,6 +338,8 @@ export interface AiRunView {
   tools: string[]
   /** implement: the implementation plan the CLI's own plan mode produced (null: none yet). */
   plan: string | null
+  /** Running, but the CLI has said nothing since this time (ms since epoch; null: it is talking). */
+  quietSince: number | null
   mode: AiMode
   status: AiRunStatus
   title: string

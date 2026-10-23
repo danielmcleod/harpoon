@@ -206,8 +206,12 @@ export function AiPanel(): React.JSX.Element {
             <button
               key={m}
               type="button"
-              onClick={() => setAiMode(m)}
-              title={MODE_INFO[m].hint}
+              onClick={() => {
+                // With a conversation open, another mode means a new conversation (the open one stays in history).
+                if (run !== undefined && run.mode !== m) newConversation()
+                setAiMode(m)
+              }}
+              title={run !== undefined && run.mode !== m ? `New conversation: ${MODE_INFO[m].hint}` : MODE_INFO[m].hint}
               className={cn('shrink-0 rounded-full border px-2 py-0.5 text-[11px]', mode === m ? 'border-primary bg-primary/15 text-foreground' : 'text-muted-foreground hover:text-foreground')}
             >
               {MODE_INFO[m].label}
@@ -227,7 +231,7 @@ export function AiPanel(): React.JSX.Element {
               }
             }}
             rows={3}
-            placeholder={run !== undefined && !busy && run.mode === mode ? 'Follow up… (Ctrl+Enter)' : MODE_INFO[mode].placeholder}
+            placeholder={run !== undefined ? (busy ? 'Wait for the answer, or stop it…' : 'Reply to this conversation… (Ctrl+Enter)') : MODE_INFO[mode].placeholder}
             className="block w-full resize-none bg-transparent px-2.5 py-2 text-xs outline-none"
           />
           <div className="flex items-center gap-2 px-2 pb-1.5">
@@ -240,19 +244,8 @@ export function AiPanel(): React.JSX.Element {
                 Stop
               </Button>
             ) : (
-              <Button
-                size="sm"
-                icon={<Send />}
-                disabled={provider?.ok === false}
-                onClick={() => {
-                  // A different mode always starts a fresh conversation.
-                  if (run !== undefined && run.mode !== mode) {
-                    void ask(text.trim(), { fresh: true })
-                    setText('')
-                  } else send()
-                }}
-              >
-                {run !== undefined && run.mode === mode ? 'Send' : MODE_INFO[mode].label}
+              <Button size="sm" icon={<Send />} disabled={provider?.ok === false || (run !== undefined && text.trim() === '')} onClick={send}>
+                {run !== undefined ? 'Reply' : MODE_INFO[mode].label}
               </Button>
             )}
           </div>
@@ -347,6 +340,7 @@ function Conversation({ run }: { run: AiRunView }): React.JSX.Element {
         </div>
       )}
       {run.questions !== null && run.questions.length > 0 && !busy && <QuestionCard runId={run.id} questions={run.questions} />}
+      {run.quietSince !== null && (run.status === 'running' || run.status === 'starting') && <QuietNotice run={run} />}
       {run.error !== null && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-2.5 py-1.5 text-xs selectable">{run.error}</div>
       )}
@@ -524,6 +518,28 @@ function ImportRepos({ repos }: { repos: readonly { id: string; name: string }[]
           {r.name}
         </button>
       ))}
+    </div>
+  )
+}
+
+/** The CLI has said nothing for a while: it may be reading a large codebase, or be stuck. */
+function QuietNotice({ run }: { run: AiRunView }): React.JSX.Element {
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => tick((x) => x + 1), 30_000)
+    return () => clearInterval(t)
+  }, [])
+  const minutes = Math.max(2, Math.round((Date.now() - (run.quietSince ?? Date.now())) / 60_000))
+  return (
+    <div className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/10 px-2.5 py-1.5 text-xs">
+      <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" />
+      <span className="flex-1">
+        No output for {minutes} minutes. {run.vendor === 'claude' ? 'Claude Code' : 'Codex'} may still be reading the code, or be stuck. Stop it to reply with
+        new instructions.
+      </span>
+      <Button size="sm" variant="outline" icon={<Square />} onClick={() => void cancelRun(run.id)}>
+        Stop
+      </Button>
     </div>
   )
 }

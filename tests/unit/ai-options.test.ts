@@ -57,3 +57,13 @@ describe('your own tools in a conversation', () => {
     expect(on).not.toContain('codex_apps.default_tools_approval_mode')
   })
 })
+
+describe('native plan passes', () => {
+  it('read the other repositories and run no sub-agents', () => {
+    const a = buildArgv({ route: 'plan', mode: 'readonly', step: 'plan', readDirs: ['/repos/api', '/repos/web'] })
+    expect(a).toContain('--add-dir=/repos/api')
+    expect(a).toContain('--add-dir=/repos/web')
+    const disallowed = a[a.indexOf('--disallowedTools') + 1] ?? ''
+    expect(disallowed.split(',')).toEqual(expect.arrayContaining(['Task', 'Agent']))
+  })
+})
