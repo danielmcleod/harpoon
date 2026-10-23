@@ -12,7 +12,7 @@ import { emptyModel } from '../../src/shared/model/schema.ts'
 const sample = () => applyOps(emptyModel({ id: 'p', name: 'Commerce Platform' }), sampleOps()).model
 const adr: DecisionRecord = {
   id: 'adr-0001', number: 1, title: 'Use Kafka for payment events', status: 'accepted', date: '2026-10-18', deciders: [], context: 'c', decision: 'd', consequences: '',
-  options: [], entityIds: [], phase: null, supersedes: null, supersededBy: null, solutionSetId: null, links: [], source: null, createdAt: 0,
+  options: [], entityIds: [], phase: null, supersedes: null, supersededBy: null, solutionSetId: null, links: [], source: null, implementationPlan: '', createdAt: 0,
 }
 
 describe('Notion', () => {

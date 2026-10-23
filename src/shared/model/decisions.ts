@@ -28,6 +28,7 @@ export function draftFromSet(set: SolutionSet, chosenId: string | null, proposal
     status: chosen === undefined ? 'proposed' : 'accepted',
     date: today(),
     deciders: [],
+    implementationPlan: '',
     context: `${set.problem.trim()}${set.constraints.trim() !== '' ? `\n\nConstraints: ${set.constraints.trim()}` : ''}${crit}`,
     decision,
     consequences,

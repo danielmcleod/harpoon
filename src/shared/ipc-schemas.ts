@@ -126,6 +126,7 @@ export const REQUEST_SCHEMAS = {
         notePath: optional(z.string().max(1000)),
         noteTask: optional(z.enum(['summarize', 'extract', 'agenda'])),
         repoIds: optional(z.array(z.string().max(ID_MAX)).max(100)),
+        proposalId: optional(z.string().max(ID_MAX)),
       }),
     ),
   }),

@@ -44,6 +44,10 @@ export function adrMarkdown(d: DecisionRecord, m: Model, all: readonly DecisionR
       if (!o.chosen && o.whyNot.trim() !== '') out.push(`Why not: ${o.whyNot.trim()}`, '')
     }
   }
+  if (d.implementationPlan.trim() !== '') {
+    // The plan's own headings sit one level under this section.
+    out.push('## Implementation plan', '', d.implementationPlan.trim().replace(/^(#{1,4}) /gm, '$1## '), '')
+  }
   if (d.links.length > 0) {
     out.push('## Links', '')
     for (const l of d.links) out.push(`- [${l.title}](${l.url})`)

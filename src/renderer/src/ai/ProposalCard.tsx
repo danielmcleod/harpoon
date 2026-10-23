@@ -1,6 +1,6 @@
 // A proposal under review: its title and rationale, counts by change kind, and every op with a checkbox (partial
 // accept). The canvas shows it as a diff overlay (green added, amber changed, red removed) while it is reviewed.
-import { Check, CircleDot, ClipboardList, Eye, EyeOff, Flag, Minus, Plus, X } from 'lucide-react'
+import { Check, CircleDot, ClipboardList, Eye, EyeOff, Flag, Minus, Plus, X, ListChecks } from 'lucide-react'
 import { useMemo } from 'react'
 import type { Proposal } from '@shared/ipc.ts'
 import type { Op } from '@shared/model/ops.ts'
@@ -13,6 +13,7 @@ import { toast } from '../state/actions.ts'
 import { currentExportView } from '../panels/ExportMenu.tsx'
 import { useStore } from '../state/store.ts'
 import { Markdown } from './Markdown.tsx'
+import { planImplementation } from '../records/decide.ts'
 
 type Kind = 'add' | 'change' | 'remove'
 
@@ -90,9 +91,14 @@ export function ProposalCard({ proposal: p }: { proposal: Proposal }): React.JSX
           )}
         </div>
         {p.status === 'accepted' && (
-          <p className="mt-1.5 text-[11px] text-muted-foreground">
-            Follow up below, for example “write an implementation brief” or, with <strong className="font-medium text-foreground">Tools</strong> turned on, “create a Linear issue for this plan”.
-          </p>
+          <div className="mt-1.5 flex flex-col items-start gap-1.5">
+            <Button size="sm" variant="outline" icon={<ListChecks />} onClick={() => planImplementation({ proposalId: p.id })} title="Your CLI’s own plan mode reads the code and plans how to build this change">
+              Plan the implementation
+            </Button>
+            <p className="text-[11px] text-muted-foreground">
+              Or follow up below, for example with <strong className="font-medium text-foreground">Tools</strong> turned on, “create a Linear issue for this plan”.
+            </p>
+          </div>
         )}
         <div className="mt-1.5 flex gap-3 text-[11px]">
           <span className="text-hx-add">+{counts.add} added</span>

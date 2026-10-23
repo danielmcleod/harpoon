@@ -44,6 +44,7 @@ export async function newDecision(title = 'New decision', source: SourceRef | nu
     number,
     title,
     status: 'proposed',
+    implementationPlan: '',
     date: today(),
     deciders: [],
     context,
@@ -92,4 +93,9 @@ export async function draftWithAi(rec: DecisionRecord, extra = ''): Promise<void
   }
   if (extra.trim() !== '') lines.push(`Notes:\n${extra}`)
   await ask(lines.join('\n\n'), { fresh: true, mode: 'decision', context: { decisionId: rec.id, ...(rec.solutionSetId !== null ? { solutionSetId: rec.solutionSetId } : {}) } })
+}
+
+/** Have the CLI's own plan mode plan how to build a decision (or an accepted proposal) in the codebase. */
+export function planImplementation(context: { decisionId?: string; proposalId?: string }): void {
+  void ask('', { fresh: true, mode: 'implement', context })
 }

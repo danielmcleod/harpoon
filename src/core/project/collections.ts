@@ -103,6 +103,7 @@ export const DecisionZ = z.object({
   solutionSetId: z.string().max(100).nullable().default(null),
   links: z.array(z.object({ title: z.string().max(300), url: z.string().max(2000) })).max(50).default([]),
   source: SourceZ,
+  implementationPlan: z.string().max(200_000).default(''),
   createdAt: z.number().default(0),
 })
 

@@ -1,7 +1,7 @@
 // A decision record (ADR): title, status, date, deciders, context, decision, consequences, the options considered,
 // what it concerns, its roadmap phase and what it supersedes. Saved as you type; the AI can write or rewrite it.
 import { openNote } from '../notes/noteActions.ts'
-import { Copy, Plus, Sparkles, Trash2, X } from 'lucide-react'
+import { Copy, ListChecks, Plus, Sparkles, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
 import type { DecisionRecord } from '@shared/ipc.ts'
 import { DECISION_STATUSES } from '@shared/ipc.ts'
@@ -14,7 +14,8 @@ import { useModel } from '../canvas/useScene.ts'
 import { reveal } from '../panels/ArchitectureTree.tsx'
 import { NotesEditor, PhasePicker } from '../panels/inspector/governance.tsx'
 import { Chip, TextArea, TextInput } from '../panels/inspector/fields.tsx'
-import { draftWithAi, openRecord } from './decide.ts'
+import { draftWithAi, openRecord, planImplementation } from './decide.ts'
+import { AI_NOTE_SHORT } from '../ai/AiNote.tsx'
 import { deleteRecord, putDecision, useRecords } from './recordsStore.ts'
 
 export const DECISION_STATUS_STYLE: Record<DecisionRecord['status'], string> = {
@@ -149,6 +150,27 @@ export function DecisionEditor({ rec }: { rec: DecisionRecord }): React.JSX.Elem
           <NotesEditor value={rec[k]} readOnly={!editable} onChange={(v) => save({ [k]: v })} />
         </section>
       ))}
+
+      <section>
+        <div className="mb-1 flex items-center gap-2">
+          <h3 className="flex-1 text-sm font-semibold">Implementation plan</h3>
+          {editable && (
+            <Button
+              size="sm"
+              variant={rec.implementationPlan.trim() === '' ? 'default' : 'outline'}
+              icon={<ListChecks />}
+              onClick={() => planImplementation({ decisionId: rec.id })}
+              title={`Your CLI’s own plan mode (Claude Code or Codex) reads the code and plans how to build this. ${AI_NOTE_SHORT}`}
+            >
+              {rec.implementationPlan.trim() === '' ? 'Plan the implementation' : 'Plan again'}
+            </Button>
+          )}
+        </div>
+        <p className="mb-1 text-[11px] text-muted-foreground">
+          How to build it in the code: steps, files, tests, rollout and risks. Planned by your CLI’s plan mode; follow up in the AI panel, for example to create issues for it.
+        </p>
+        {rec.implementationPlan.trim() !== '' && <NotesEditor value={rec.implementationPlan} readOnly={!editable} onChange={(v) => save({ implementationPlan: v })} />}
+      </section>
 
       <section>
         <div className="mb-1.5 flex items-center gap-2">

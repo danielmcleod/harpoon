@@ -147,6 +147,11 @@ function Page({ topic }: { topic: HelpTopic }): React.JSX.Element {
             ]}
           />
           <P>
+            <B>Plan the implementation</B> (on a decision record, an accepted proposal, or the AI panel) hands the work to your CLI&apos;s own plan mode: Claude Code&apos;s plan mode
+            or Codex&apos;s plan collaboration mode reads the code and plans how to build it: steps, files, tests, rollout and risks. A decision keeps its plan; follow up below to
+            refine it or, with Tools, turn it into issues.
+          </P>
+          <P>
             Keep talking after a run: the box below the conversation follows up in the same session, so the AI remembers the plan you accepted. <B>Tools</B> beside it lets
             that conversation use some of your own MCP servers or connectors (Linear, GitHub, Jira…), for example &quot;create a Linear issue for this plan&quot;. They are off unless
             you tick them, and the AI acts in them under your account.

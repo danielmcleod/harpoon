@@ -30,7 +30,8 @@ import type { Model } from '../../shared/model/schema.ts'
 import { MCP_SERVER_NAME, MCP_TOKEN_ENV } from './mcp-host.ts'
 import type { McpHost, McpRoute } from './mcp-host.ts'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { SYSTEM_BRIEF, firstPrompt } from './prompts.ts'
+import { IMPLEMENT_BRIEF, SYSTEM_BRIEF, firstPrompt } from './prompts.ts'
+import { implementContext } from './implement.ts'
 import type { ProposalStore } from './proposals.ts'
 import type { Providers } from './providers.ts'
 import { registerTools } from './tools.ts'
@@ -62,6 +63,8 @@ interface RunState {
   published?: { pages: Record<string, string>; summary: string }
   /** publish mode: the user's Notion MCP server the pass may use. */
   allowServers?: string[]
+  /** implement: the plan last saved on the decision. */
+  planSaved?: string
   /** notes mode: what the agent produced. */
   note: { summary?: string; items?: { kind: NoteItemKind; text: string; action: NoteAction }[]; agenda?: string }
   selection: AiSelection
@@ -153,6 +156,7 @@ export class AiRunner {
         effort: req.effort ?? null,
         external: false,
         tools,
+        plan: null,
         mode: req.mode,
         status: 'starting',
         title: req.prompt.trim().split('\n')[0]?.slice(0, 80) || defaultTitle(req.mode),
@@ -214,7 +218,18 @@ export class AiRunner {
     }
     this.#runs.set(id, state)
     this.#emit(state, true)
-    const prompt = firstPrompt({ mode: req.mode, prompt: req.prompt, selection: req.selection, model: session.model }) + repoBrief(session.root, repos)
+    // Planning the implementation: the decision and the changes it builds on go into the prompt (native plan passes
+    // have no Harpoon tools to look them up).
+    let planContext = ''
+    if (req.mode === 'implement') {
+      const decision = req.context?.decisionId === undefined ? undefined : (await listCollection(session.root, 'decisions')).find((x) => x.id === req.context?.decisionId)
+      const chosen = decision?.options.find((x) => x.chosen)?.proposalId ?? null
+      const pid = req.context?.proposalId ?? chosen ?? undefined
+      const proposal = pid === undefined ? undefined : this.#o.proposals.get(pid)
+      planContext = implementContext({ model: session.model, context: req.context ?? {}, decision, proposal })
+      if (planContext === '' && req.selection.nodeIds.length === 0 && req.prompt.trim() === '') throw new HarpoonError('VALIDATION', 'Pick what to plan: a decision, an accepted proposal, or select the planned parts first.')
+    }
+    const prompt = firstPrompt({ mode: req.mode, prompt: req.prompt, selection: req.selection, model: session.model }) + planContext + repoBrief(session.root, repos)
     const missing = resolved.filter((r) => r.path === null && (picked === null || picked.has(r.id))).map((r) => meta.repos.find((x) => x.id === r.id)?.name ?? r.id)
     if (missing.length > 0) this.#activity(state, 'repos', `Not cloned on this machine, so not read: ${missing.join(', ')} (locate them in Project settings)`, 'failed')
     void this.#job(state, prompt, false)
@@ -273,6 +288,7 @@ export class AiRunner {
         effort: null,
         external: true,
         tools: [],
+        plan: null,
         mode: 'plan',
         status: 'running',
         title: 'Outside agent',
@@ -360,6 +376,15 @@ export class AiRunner {
       s.view.proposalId = null
       s.submitted = null
     }
+    // After a native plan: that pass kept no session, so a follow-up starts a normal pass that carries the plan.
+    let carry = ''
+    if (s.view.mode === 'implement' && s.view.plan !== null && s.sessionId === undefined) {
+      carry = `The implementation plan you wrote earlier in this conversation:
+
+${s.view.plan}
+
+The user follows up: `
+    }
     s.view.turns.push({ role: 'user', text: prompt.trim() })
     s.view.questions = null
     s.view.status = 'starting'
@@ -372,7 +397,7 @@ export class AiRunner {
 
 (Options so far: ${s.options.map((o) => `${o.key} "${o.title}"`).join(', ')}. Use select_option before editing one, then submit_solutions again.)`
         : ''
-    void this.#job(s, prompt.trim() + reminder, s.sessionId !== undefined)
+    void this.#job(s, carry + prompt.trim() + reminder, s.sessionId !== undefined)
     return s.view
   }
 
@@ -400,7 +425,11 @@ export class AiRunner {
     try {
       await this.#openRoute(s)
       if (v.mode === 'import' && !resume) await this.#importJob(s, prompt)
-      else {
+      else if (v.mode === 'implement' && v.plan === null && !resume) {
+        // The CLI's own plan mode writes the plan (Claude Code's plan mode, Codex's plan collaboration mode).
+        v.phase = 'Planning in the CLI’s plan mode'
+        await this.#runPass(s, { prompt, resume: false, quiet: false, label: null, native: true })
+      } else {
         v.phase = null
         await this.#runPass(s, { prompt, resume, quiet: false, label: null })
       }
@@ -635,7 +664,7 @@ export class AiRunner {
   }
 
   /** Run one CLI pass against the run's draft. Quiet passes (import deep dives) report only activity. */
-  async #runPass(s: RunState, o: { prompt: string; resume: boolean; quiet: boolean; label: string | null }): Promise<void> {
+  async #runPass(s: RunState, o: { prompt: string; resume: boolean; quiet: boolean; label: string | null; native?: boolean }): Promise<void> {
     const v = s.view
     const route = s.route
     const configFile = s.configFile
@@ -643,21 +672,25 @@ export class AiRunner {
     const adapter = this.#o.providers.adapter(v.vendor)
     // The probe teaches the adapter the account's facts (Codex: which models it may run).
     await this.#o.providers.probe(v.vendor).catch(() => undefined)
+    const native = o.native === true
     const handle = adapter.start({
       runId: v.id,
-      step: 'design',
+      step: native ? 'plan' : 'design',
       cwd: s.cwd,
       readDirs: s.repos.map((r) => r.path).filter((p) => resolve(p) !== resolve(s.cwd)),
-      prompt: o.prompt + toolsNote(v.mode, v.tools),
-      ...(o.resume ? {} : { systemAppend: SYSTEM_BRIEF }),
+      prompt: native ? o.prompt : o.prompt + toolsNote(v.mode, v.tools),
+      ...(o.resume ? {} : { systemAppend: native ? IMPLEMENT_BRIEF : SYSTEM_BRIEF }),
       model: v.model,
       effort: v.effort,
       mode: 'readonly',
-      planNative: false,
+      planNative: native,
       allowRules: [],
       trustFolder: false,
       askTimeoutMs: ASK_TIMEOUT_MS,
       ephemeral: false,
+      ...(native
+        ? {}
+        : {
       mcp: {
         name: MCP_SERVER_NAME,
         url: route.url,
@@ -667,6 +700,7 @@ export class AiRunner {
         ...(s.allowServers !== undefined ? { allow: s.allowServers } : {}),
         readCode: v.mode !== 'publish',
       },
+          }),
       env: { [MCP_TOKEN_ENV]: route.token },
       ...(o.resume && s.sessionId !== undefined ? { resume: { sessionId: s.sessionId } } : {}),
     })
@@ -685,6 +719,15 @@ export class AiRunner {
     // Claude reports its MCP servers in its init frame; a failed connection would otherwise end "successfully" with
     // an answer that never touched the diagram.
     handle.onSignal((sig) => {
+      // The plan the CLI's plan mode presented: it is the answer (and goes on the decision when there is one).
+      if (sig.type === 'plan-captured') {
+        v.plan = sig.markdown
+        const last = v.turns.at(-1)
+        if (last?.role === 'assistant') last.text = sig.markdown
+        else v.turns.push({ role: 'assistant', text: sig.markdown })
+        this.#emit(s, true)
+        return
+      }
       if (sig.type !== 'meta' || sig.key !== 'mcp_servers' || !Array.isArray(sig.value)) return
       const ours = (sig.value as { name?: unknown; status?: unknown }[]).find((x) => x.name === MCP_SERVER_NAME)
       if (ours !== undefined && ours.status !== 'connected') {
@@ -694,11 +737,14 @@ export class AiRunner {
     })
     await handle.exited
     // Any CLI: a pass that should have used the diagram tools but never reached them.
-    if (fatal === null && s.harpoonCalls === toolCallsBefore && !s.cancelled && v.mode !== 'explain') {
+    if (fatal === null && s.harpoonCalls === toolCallsBefore && !s.cancelled && v.mode !== 'explain' && v.mode !== 'implement') {
       fatal = `${v.vendor === 'claude' ? 'Claude' : 'Codex'} finished without using Harpoon's tools, so nothing was staged. It may not have connected to them; try again, or check the CLI's MCP settings.`
     }
     s.handles.delete(handle)
     if (!o.quiet) s.sessionId = handle.sessionId() ?? s.sessionId
+    // A native plan pass keeps no session to resume (Claude's plan route does not persist it); follow-ups start fresh
+    // and carry the plan instead.
+    if (native) s.sessionId = undefined
     if (passId !== null) {
       const a = v.activity.find((x) => x.id === passId)
       if (a !== undefined) {
@@ -738,11 +784,14 @@ export class AiRunner {
         if (/harpoon/i.test(e.name) || /^(mcp:)?harpoon[\s:/]/i.test(e.summary) || e.name === 'ToolSearch') return
         const id = e.id ?? `${e.name}-${v.activity.length}`
         const existing = v.activity.find((a) => a.id === id)
-        const status: AiActivity['status'] = e.phase === 'end' ? (e.status === 'ok' || e.status === undefined ? 'ok' : 'failed') : 'running'
+        // Plan mode hands its plan over by ExitPlanMode, which the adapter captures by declining: that is success.
+        const planHandOff = e.name === 'ExitPlanMode'
+        const status: AiActivity['status'] = e.phase === 'end' ? (planHandOff || e.status === 'ok' || e.status === undefined ? 'ok' : 'failed') : 'running'
+        const summary = planHandOff ? 'Plan ready' : e.summary
         if (existing !== undefined) {
           existing.status = status
-          if (e.summary !== '') existing.summary = e.summary
-        } else v.activity.push({ id, name: e.name, summary: e.summary, status })
+          if (summary !== '') existing.summary = summary
+        } else v.activity.push({ id, name: planHandOff ? 'plan' : e.name, summary, status })
         if (v.activity.length > 600) v.activity.splice(0, v.activity.length - 600)
         break
       }
@@ -887,6 +936,7 @@ export class AiRunner {
       status: prev?.status ?? (set?.chosen != null ? 'accepted' : 'proposed'),
       date: prev?.date ?? new Date().toISOString().slice(0, 10),
       deciders: dd.deciders.length > 0 ? dd.deciders : (prev?.deciders ?? []),
+      implementationPlan: prev?.implementationPlan ?? '',
       context: dd.context,
       decision: dd.decision,
       consequences: dd.consequences,
@@ -943,6 +993,19 @@ export class AiRunner {
     this.#o.bus.emit({ kind: 'notes', path })
   }
 
+  /** A plan for a decision is kept on it ("Implementation plan"). */
+  async #finishPlan(s: RunState): Promise<void> {
+    const v = s.view
+    if (v.plan === null || v.decisionId === null || s.planSaved === v.plan) return
+    const root = this.#o.projects.require().root
+    const d = (await listCollection(root, 'decisions')).find((x) => x.id === v.decisionId)
+    if (d === undefined) return
+    await putCollection(root, 'decisions', { ...d, implementationPlan: v.plan })
+    this.#o.bus.emit({ kind: 'collection', collection: 'decisions' })
+    s.planSaved = v.plan
+    this.#activity(s, 'decision', `Saved the plan on ${d.title}`, 'ok')
+  }
+
   async #finish(s: RunState): Promise<void> {
     const v = s.view
     if (v.mode === 'publish') {
@@ -952,6 +1015,7 @@ export class AiRunner {
     if (v.mode === 'notes') return this.#finishNotes(s)
     if (v.mode === 'solutions') return this.#finishSolutions(s)
     if (v.mode === 'decision') return this.#finishDecision(s)
+    if (v.mode === 'implement') await this.#finishPlan(s)
     s.draft.settlePlacement()
     if (isEmptySummary(s.draft.summary())) return
     const ops = s.draft.proposalOps()
