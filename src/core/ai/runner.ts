@@ -40,6 +40,8 @@ import { userCodexMcpServers } from './codex-isolation.ts'
 import { applySeed } from '../ingest/apply-seed.ts'
 import { seedRepository } from '../ingest/seed.ts'
 import { checkUserTools } from './user-tools.ts'
+import { KEEP_PER_PROJECT } from './conversations.ts'
+import type { ConversationStore, SavedConversation } from './conversations.ts'
 
 interface OptionState {
   key: string
@@ -50,6 +52,11 @@ interface OptionState {
 
 interface RunState {
   view: AiRunView
+  /** The project it belongs to (conversations are kept per project). */
+  projectId: string
+  /** Loaded from an earlier session: the next reply sets it up again (draft, options) before running. */
+  restored?: boolean
+  persistTimer?: ReturnType<typeof setTimeout> | null
   /** The working draft (solutions mode: whichever option is active). */
   draft: Draft
   /** The model the run started from. */
@@ -101,16 +108,18 @@ export interface AiRunnerDeps {
   projects: ProjectManager
   proposals: ProposalStore
   runsDir: string
+  /** Conversations kept between sessions (per project, on this computer). */
+  conversations: ConversationStore
   /** Where this machine keeps a project's repos (repo id → path). */
   localRepoPaths: (projectId: string) => Readonly<Record<string, string>>
   /** The Notion MCP server this machine publishes through (null: none chosen). */
   notionServer: (projectId: string) => string | null
 }
 
-/** For the prompt: the user's own tools this conversation has, and what they are for. */
 /** No output for this long marks a run as quiet ("no output for N minutes"). */
 const QUIET_AFTER_MS = 2 * 60_000
 
+/** For the prompt: the user's own tools this conversation has, and what they are for. */
 export function toolsNote(mode: string, tools: readonly string[]): string {
   if (mode === 'publish' || tools.length === 0) return ''
   return `
@@ -156,8 +165,115 @@ export class AiRunner {
     }
   }
 
+  /** The open project's conversations, newest first. */
   list(): AiRunView[] {
-    return [...this.#runs.values()].map((r) => r.view).sort((a, b) => b.createdAt - a.createdAt)
+    const pid = this.#o.projects.session?.model.meta.id
+    return [...this.#runs.values()]
+      .filter((r) => r.projectId === pid)
+      .map((r) => r.view)
+      .sort((a, b) => b.createdAt - a.createdAt)
+  }
+
+  /**
+   * A project opened: bring back its conversations from earlier sessions (and forget other projects' finished ones).
+   * One that was running when Harpoon closed shows as interrupted; replying continues it.
+   */
+  async loadHistory(): Promise<void> {
+    const session = this.#o.projects.session
+    if (session === null) return
+    const pid = session.model.meta.id
+    for (const [id, r] of this.#runs) if (r.projectId !== pid && r.handles.size === 0) this.#runs.delete(id)
+    const saved = await this.#o.conversations.list(pid).catch(() => [])
+    const repos = await this.#localRepos(session.root, session.model)
+    for (const c of saved.slice(0, KEEP_PER_PROJECT)) {
+      if (this.#runs.has(c.view.id)) continue
+      const v: AiRunView = { ...c.view, quietSince: null, phase: null, questions: null }
+      if (v.status === 'running' || v.status === 'starting') {
+        v.status = 'cancelled'
+        v.error = 'Interrupted: Harpoon closed while this was running. Reply to continue.'
+      }
+      const s: RunState = {
+        view: v,
+        projectId: pid,
+        restored: true,
+        draft: new Draft(session.model),
+        base: session.model,
+        context: c.context,
+        options: [],
+        active: -1,
+        solutions: null,
+        decision: null,
+        note: {},
+        selection: c.selection,
+        cwd: session.root,
+        repos,
+        route: null,
+        configFile: null,
+        handles: new Set(),
+        cancelled: false,
+        harpoonCalls: 0,
+        sessionId: c.sessionId ?? undefined,
+        submitted: null,
+        proposalSeq: c.proposalSeq,
+        emitTimer: null,
+        draftTimer: null,
+        ...(v.tools.length > 0 ? { allowServers: v.tools } : {}),
+        ...(c.planPrompt !== null ? { planPrompt: c.planPrompt } : {}),
+        ...(c.planSaved !== null ? { planSaved: c.planSaved } : {}),
+      }
+      this.#runs.set(v.id, s)
+      this.#o.bus.emit({ kind: 'ai-run', run: structuredClone(v) })
+    }
+  }
+
+  /** Forget a conversation (here and on disk). A running one must be stopped first. */
+  async remove(runId: string): Promise<void> {
+    const s = this.#runs.get(runId)
+    if (s === undefined) return
+    if (s.handles.size > 0) throw new HarpoonError('CONFLICT', 'Stop the conversation first.')
+    if (s.persistTimer != null) clearTimeout(s.persistTimer)
+    this.#runs.delete(runId)
+    await this.#o.conversations.remove(s.projectId, runId)
+  }
+
+  /** Forget every finished conversation of the open project. */
+  async clear(): Promise<void> {
+    const pid = this.#o.projects.session?.model.meta.id
+    for (const [id, s] of [...this.#runs]) if (s.projectId === pid && s.handles.size === 0) await this.remove(id)
+  }
+
+  /** The project's repos on this machine (the agent may read them all). */
+  async #localRepos(root: string, m: Model): Promise<RunState['repos']> {
+    const resolved = await resolveRepos(root, m.meta.repos, this.#o.localRepoPaths(m.meta.id)).catch(() => [])
+    return resolved.flatMap((r) => {
+      const ref = m.meta.repos.find((x) => x.id === r.id)
+      return r.path === null || ref === undefined ? [] : [{ id: r.id, name: ref.name, role: ref.role, path: r.path }]
+    })
+  }
+
+  /** Save a conversation a moment after it changes (outside agents' runs are not kept). */
+  #persist(s: RunState): void {
+    if (s.view.external || !this.#runs.has(s.view.id)) return
+    if (s.persistTimer != null) clearTimeout(s.persistTimer)
+    s.persistTimer = setTimeout(() => {
+      s.persistTimer = null
+      if (!this.#runs.has(s.view.id)) return
+      const c: SavedConversation = {
+        version: 1,
+        projectId: s.projectId,
+        view: s.view,
+        sessionId: s.sessionId ?? null,
+        context: s.context,
+        selection: s.selection,
+        planPrompt: s.planPrompt ?? null,
+        planSaved: s.planSaved ?? null,
+        proposalSeq: s.proposalSeq,
+      }
+      void this.#o.conversations
+        .save(c)
+        .then(() => this.#o.conversations.prune(s.projectId))
+        .catch((err: unknown) => this.#o.log.warn('could not save the conversation', { runId: s.view.id, err: err instanceof Error ? err.message : String(err) }))
+    }, 400)
   }
 
   async start(req: AiStartRequest): Promise<AiRunView> {
@@ -177,6 +293,7 @@ export class AiRunner {
     })
     const id = newRequestId('ai')
     const state: RunState = {
+      projectId: meta.id,
       view: {
         id,
         vendor: req.vendor,
@@ -322,6 +439,7 @@ export class AiRunner {
     const session = this.#o.projects.require()
     const id = newRequestId('ext')
     const s: RunState = {
+      projectId: session.model.meta.id,
       view: {
         id,
         vendor: 'claude',
@@ -401,6 +519,21 @@ export class AiRunner {
     const s = this.#runs.get(runId)
     if (s === undefined) throw new HarpoonError('NOT_FOUND', 'That conversation is gone.')
     if (s.view.status === 'running' || s.view.status === 'starting') throw new HarpoonError('CONFLICT', 'Wait for the current answer first.')
+    // A conversation from an earlier session: a fresh draft from the diagram as it is now (its proposal, if still
+    // pending, stays as it was), the comparison's options again, and the project folder and repos as they are now.
+    if (s.restored === true) {
+      const session = this.#o.projects.require()
+      s.restored = false
+      s.draft = new Draft(session.model)
+      s.base = session.model
+      s.view.proposalId = null
+      s.cwd = session.root
+      s.repos = await this.#localRepos(session.root, session.model)
+      if (s.view.mode === 'solutions' && s.view.solutionSetId !== null) {
+        await this.#loadOptions(s, s.view.solutionSetId)
+        s.draft = switchableDraft(() => s.options[s.active]?.draft ?? new Draft(session.model))
+      }
+    }
     // A follow-up may bring tools the conversation did not have (accept a plan, then "create a Linear issue for it").
     if (tools !== undefined && s.view.mode !== 'publish') {
       const checked = await checkUserTools(s.view.vendor, tools).catch((err: unknown) => {
@@ -1112,6 +1245,7 @@ The user adds: `
     if (now) {
       if (s.emitTimer !== null) clearTimeout(s.emitTimer)
       send()
+      this.#persist(s)
       return
     }
     s.emitTimer ??= setTimeout(send, 150)

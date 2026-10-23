@@ -16,6 +16,7 @@ import { ProjectManager } from './project/manager.ts'
 import { McpHost } from './ai/mcp-host.ts'
 import { ExternalMcp } from './ai/external.ts'
 import { listUserTools } from './ai/user-tools.ts'
+import { ConversationStore } from './ai/conversations.ts'
 import { installCodexPlugin, writeCodexMarketplace } from './ai/agent-setup.ts'
 import type { BridgeCommand } from './ai/agent-setup.ts'
 import { ProposalStore } from './ai/proposals.ts'
@@ -57,11 +58,15 @@ export async function createCore(o: CoreOptions): Promise<Core> {
   const proposals = new ProposalStore({ bus, log: o.log.child('proposals'), projects })
   const providers = new Providers({ probeCwd: join(paths.tmpDir, 'probe-cwd'), log: o.log.child('providers') })
   const mcp = new McpHost(o.log.child('mcp'))
-  const ai = new AiRunner({ providers, mcp, bus, log: o.log.child('ai'), projects, proposals, runsDir: paths.runsDir, localRepoPaths: (id) => state.state.repoPaths[id] ?? {}, notionServer: (id) => state.state.notionServers[id] ?? null })
+  const ai = new AiRunner({ providers, mcp, bus, log: o.log.child('ai'), projects, proposals, runsDir: paths.runsDir, conversations: new ConversationStore(join(paths.home, 'conversations')), localRepoPaths: (id) => state.state.repoPaths[id] ?? {}, notionServer: (id) => state.state.notionServers[id] ?? null })
   const external = new ExternalMcp({ state, ai, log: o.log.child('external-mcp'), bridge: o.bridge ?? null })
   await external.start()
   bus.on((e) => {
-    if (e.kind === 'project-opened') void proposals.load(e.project.root)
+    if (e.kind === 'project-opened') {
+      void proposals.load(e.project.root)
+      // The project's AI conversations from earlier sessions.
+      void ai.loadHistory()
+    }
     else if (e.kind === 'project-closed') void proposals.load(null)
   })
 
@@ -101,6 +106,8 @@ export async function createCore(o: CoreOptions): Promise<Core> {
     'ai.start': (r) => ai.start(r),
     'ai.send': (r) => ai.send(r.runId, r.prompt, r.tools),
     'ai.tools': (r) => listUserTools(r.force === true),
+    'ai.delete': (r) => ai.remove(r.runId),
+    'ai.clear': () => ai.clear(),
     'ai.cancel': (r) => Promise.resolve(ai.cancel(r.runId)),
     'ai.runs': () => Promise.resolve(ai.list()),
     'proposal.list': () => Promise.resolve(proposals.list()),

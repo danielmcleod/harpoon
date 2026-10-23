@@ -4,12 +4,12 @@
 import { openNote } from '../notes/noteActions.ts'
 import { edit } from '../state/actions.ts'
 import { openRecord } from '../records/decide.ts'
-import { Bot, ChevronDown, CircleAlert, History, Loader2, NotebookPen, Plus, RefreshCw, Scale, ScanSearch, ScrollText, Send, Square, Wrench, X } from 'lucide-react'
+import { Bot, ChevronDown, CircleAlert, History, Loader2, NotebookPen, Plus, RefreshCw, Scale, ScanSearch, ScrollText, Send, Square, Wrench, X, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AiMode, AiRunView } from '@shared/ipc.ts'
 import { Button } from '../components/ui/Button.tsx'
 import { cn } from '../lib/cn.ts'
-import { ask, cancelRun, loadProviders, newConversation, setAiMode, setVendor } from '../state/ai.ts'
+import { ask, cancelRun, clearHistory, deleteConversation, loadProviders, newConversation, setAiMode, setVendor } from '../state/ai.ts'
 import { getState, setAi, setUi, useStore } from '../state/store.ts'
 import { Markdown } from './Markdown.tsx'
 import { ProposalCard } from './ProposalCard.tsx'
@@ -166,20 +166,41 @@ export function AiPanel(): React.JSX.Element {
       {showHistory && (
         <div className="max-h-56 overflow-y-auto border-b p-2">
           {history.length === 0 && <p className="px-1 text-xs text-muted-foreground">No conversations yet.</p>}
+          {history.length > 0 && (
+            <div className="mb-1 flex items-center px-1 text-[10.5px] text-muted-foreground">
+              <span className="flex-1">Kept on this computer for this project (the latest 50).</span>
+              <button
+                type="button"
+                className="rounded px-1 hover:bg-accent hover:text-foreground"
+                onClick={() => {
+                  if (window.confirm('Clear this project’s AI conversation history? Running conversations stay; proposals, decisions and plans are kept.')) void clearHistory()
+                }}
+              >
+                Clear history
+              </button>
+            </div>
+          )}
           {history.map((r) => (
-            <button
-              key={r.id}
-              type="button"
-              onClick={() => {
-                setAi({ activeRunId: r.id, review: r.proposalId !== null ? { kind: 'proposal', id: r.proposalId } : null, excluded: {} })
-                setShowHistory(false)
-              }}
-              className={cn('flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent/50', r.id === activeId && 'bg-accent')}
-            >
-              <StatusDot status={r.status} />
-              <span className="min-w-0 flex-1 truncate">{r.title}</span>
-              <span className="text-[10px] text-muted-foreground">{MODE_INFO[r.mode].label}</span>
-            </button>
+            <div key={r.id} className={cn('group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-accent/50', r.id === activeId && 'bg-accent')}>
+              <button
+                type="button"
+                onClick={() => {
+                  setAi({ activeRunId: r.id, review: r.proposalId !== null ? { kind: 'proposal', id: r.proposalId } : null, excluded: {} })
+                  setShowHistory(false)
+                }}
+                className="flex min-w-0 flex-1 items-center gap-2 text-left"
+              >
+                <StatusDot status={r.status} />
+                <span className="min-w-0 flex-1 truncate">{r.title}</span>
+                <span className="shrink-0 text-[10px] text-muted-foreground">{when(r.createdAt)}</span>
+                <span className="shrink-0 text-[10px] text-muted-foreground">{MODE_INFO[r.mode].label}</span>
+              </button>
+              {r.status !== 'running' && r.status !== 'starting' && (
+                <button type="button" aria-label={`Delete conversation: ${r.title}`} title="Delete conversation" onClick={() => void deleteConversation(r.id)} className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-accent hover:text-destructive focus-visible:opacity-100">
+                  <Trash2 className="size-3" />
+                </button>
+              )}
+            </div>
           ))}
         </div>
       )}
@@ -542,4 +563,10 @@ function QuietNotice({ run }: { run: AiRunView }): React.JSX.Element {
       </Button>
     </div>
   )
+}
+
+/** "14:05" today, "Oct 20" otherwise. */
+function when(t: number): string {
+  const d = new Date(t)
+  return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString([], { month: 'short', day: 'numeric' })
 }

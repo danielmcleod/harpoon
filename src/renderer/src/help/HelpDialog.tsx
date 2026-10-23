@@ -152,6 +152,8 @@ function Page({ topic }: { topic: HelpTopic }): React.JSX.Element {
             refine it or, with Tools, turn it into issues.
           </P>
           <P>
+            Conversations are kept on this computer for each project (the latest 50, never in the project folder), so they are still there after you close
+            Harpoon; replying continues the CLI&apos;s own session. Delete one, or clear the history, from the conversation list.
             Keep talking after a run: the box below the conversation follows up in the same session, so the AI remembers the plan you accepted. <B>Tools</B> beside it lets
             that conversation use some of your own MCP servers or connectors (Linear, GitHub, Jira…), for example &quot;create a Linear issue for this plan&quot;. They are off unless
             you tick them, and the AI acts in them under your account.

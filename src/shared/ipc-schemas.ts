@@ -132,6 +132,8 @@ export const REQUEST_SCHEMAS = {
   }),
   'ai.send': z.strictObject({ runId: z.string().max(ID_MAX), prompt: z.string().min(1).max(PROMPT_MAX), tools: optional(z.array(ToolNameZ).max(20)) }),
   'ai.tools': z.strictObject({ force: optional(z.boolean()) }),
+  'ai.delete': z.strictObject({ runId: z.string().max(ID_MAX) }),
+  'ai.clear': VoidZ,
   'ai.cancel': z.strictObject({ runId: z.string().max(ID_MAX) }),
   'ai.runs': VoidZ,
   'proposal.list': VoidZ,

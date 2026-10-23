@@ -72,6 +72,8 @@ export function handleEvents(batch: AppEvent[]): void {
         break
       case 'project-opened':
         adoptProject(e.project)
+        // This project's conversations arrive from the core (kept from earlier sessions); another project's go.
+        setAi({ runs: {}, activeRunId: null, review: null, drafts: {} })
         void loadProposals()
         void loadRecords()
         void loadNotes()

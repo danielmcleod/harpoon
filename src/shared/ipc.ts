@@ -669,6 +669,10 @@ export interface Commands {
   'ai.send': { req: { runId: string; prompt: string; tools?: string[] }; res: AiRunView }
   /** The user's own MCP servers and connectors each CLI has (`force`: ask the CLIs again). */
   'ai.tools': { req: { force?: boolean }; res: UserTools }
+  /** Forget a conversation (stop it first). */
+  'ai.delete': { req: { runId: string }; res: void }
+  /** Forget the open project's finished conversations. */
+  'ai.clear': { req: void; res: void }
   'ai.cancel': { req: { runId: string }; res: void }
   'ai.runs': { req: void; res: AiRunView[] }
   'proposal.list': { req: void; res: Proposal[] }
@@ -760,6 +764,8 @@ export const COMMAND_AREA = {
   'ai.start': 'ai',
   'ai.send': 'ai',
   'ai.tools': 'ai',
+  'ai.delete': 'ai',
+  'ai.clear': 'ai',
   'ai.cancel': 'ai',
   'ai.runs': 'ai',
   'proposal.list': 'ai',

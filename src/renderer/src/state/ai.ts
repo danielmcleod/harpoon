@@ -62,6 +62,27 @@ export async function ask(prompt: string, o: { fresh?: boolean; mode?: AiMode; c
   setUi({ aiOpen: true })
 }
 
+/** Forget a conversation (here and in the history kept on this computer). */
+export async function deleteConversation(runId: string): Promise<void> {
+  const r = await invoke('ai.delete', { runId })
+  if (!r.ok) return toast(r.error.message, 'error')
+  setAi((ai) => {
+    const runs = { ...ai.runs }
+    delete runs[runId]
+    return { runs, ...(ai.activeRunId === runId ? { activeRunId: null, review: null } : {}) }
+  })
+}
+
+/** Forget the project's finished conversations. */
+export async function clearHistory(): Promise<void> {
+  const r = await invoke('ai.clear')
+  if (!r.ok) return toast(r.error.message, 'error')
+  setAi((ai) => {
+    const runs = Object.fromEntries(Object.entries(ai.runs).filter(([, v]) => v.status === 'running' || v.status === 'starting'))
+    return { runs, ...(ai.activeRunId !== null && runs[ai.activeRunId] === undefined ? { activeRunId: null, review: null } : {}) }
+  })
+}
+
 export function newConversation(): void {
   setAi({ activeRunId: null, review: null, highlight: null, excluded: {} })
 }
