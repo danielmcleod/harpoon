@@ -19,9 +19,10 @@ export function useScene(model: Model): Scene {
   const expanded = useStore((s) => s.ui.expanded)
   const focusId = useStore((s) => s.ui.focusId)
   const style = useStore((s) => s.prefs.nodeStyle)
+  const detail = useStore((s) => s.ui.detail)
   return useMemo(
-    () => computeScene(model, { expanded: new Set(Object.keys(expanded)), focusId, style }),
-    [model, expanded, focusId, style],
+    () => computeScene(model, { expanded: new Set(Object.keys(expanded)), focusId, style, detail }),
+    [model, expanded, focusId, style, detail],
   )
 }
 

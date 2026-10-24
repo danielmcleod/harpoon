@@ -41,6 +41,7 @@ if (data === null) {
       mode: 'docs',
       focusId: data.view.focusId,
       expanded: Object.fromEntries(data.view.expanded.map((id) => [id, true as const])),
+      detail: data.view.detail ?? 'full',
       fitNonce: ui.fitNonce + 1,
     }))
   })

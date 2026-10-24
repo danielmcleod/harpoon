@@ -47,7 +47,15 @@ export interface HarpoonOptions {
   barbAngle?: number
   sourcePort?: Port | null
   targetPort?: Port | null
+  /**
+   * Shift the whole connector this far to the left of its direction of travel. Two drawn edges on one pair (A→B and
+   * B→A) both shift left of their own direction, so they end up side by side instead of on the same pixels.
+   */
+  offset?: number
 }
+
+/** The sideways shift for a drawn edge whose pair also has an edge the other way (clears a duplex pair's lines). */
+export const RECIPROCAL_OFFSET = 11
 
 /** The port of a hexagon whose edge faces the direction `angle` (radians, y down). */
 export function portFacing(angle: number): Port {
@@ -122,6 +130,10 @@ export function harpoonGeometry(source: HexShape, target: HexShape, o: HarpoonOp
   // Normal to the left of the direction of travel (screen coordinates, y down).
   const n = { x: u.y, y: -u.x }
   const angle = Math.atan2(u.y, u.x)
+  if (o.offset !== undefined && o.offset !== 0) {
+    p0 = add(p0, mul(n, o.offset))
+    p1 = add(p1, mul(n, o.offset))
+  }
   const mid = mul(add(p0, p1), 0.5)
 
   if (!o.duplex) {

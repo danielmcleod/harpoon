@@ -18,7 +18,7 @@ let includeNotes = false
 
 export function currentExportView(): ExportView {
   const s = getState()
-  return { focusId: s.ui.focusId, expanded: Object.keys(s.ui.expanded), style: s.prefs.nodeStyle, theme: s.theme.resolved, includeNotes }
+  return { focusId: s.ui.focusId, expanded: Object.keys(s.ui.expanded), detail: s.ui.detail, style: s.prefs.nodeStyle, theme: s.theme.resolved, includeNotes }
 }
 
 async function saveText(format: ExportFormat): Promise<void> {

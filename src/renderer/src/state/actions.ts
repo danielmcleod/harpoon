@@ -8,6 +8,7 @@ import { applyOps } from '@shared/model/ops.ts'
 import type { Op } from '@shared/model/ops.ts'
 import { call, invoke } from '../ipc/client.ts'
 import { newConnectorOps } from '../canvas/edits.ts'
+import { arrangeLevel } from '@shared/geometry/tidy.ts'
 import { applyTheme } from '../lib/theme.ts'
 import { INITIAL_AI, INITIAL_UI, getState, setAi, setState, setUi } from './store.ts'
 import type { Mode, Selection } from './store.ts'
@@ -340,6 +341,8 @@ export function completeConnect(target: string): boolean {
 }
 
 export function toggleExpanded(id: string, open?: boolean): void {
+  const s = getState()
+  if ((open ?? s.ui.expanded[id] !== true) && s.ui.mode === 'edit') arrangeOnFirstExpand(id)
   setUi((ui) => {
     const isOpen = ui.expanded[id] === true
     const next = { ...ui.expanded }
@@ -347,6 +350,22 @@ export function toggleExpanded(id: string, open?: boolean): void {
     else delete next[id]
     return { expanded: next }
   })
+}
+
+/**
+ * The first time a node with inner parts but no saved cells for them opens, lay the parts out properly (callers
+ * left, callees right, lines to the outside counted) and save that, instead of drawing them in id order.
+ */
+function arrangeOnFirstExpand(id: string): void {
+  const s = getState()
+  const m = s.project?.model
+  if (m === undefined) return
+  const kids = Object.values(m.nodes).filter((n) => n.parentId === id)
+  if (kids.length < 2 || kids.some((n) => m.layout[n.id] !== undefined)) return
+  const expanded = new Set([...Object.keys(s.ui.expanded), id])
+  const cells = arrangeLevel(m, id, { expanded, focusId: s.ui.focusId, timeLimitMs: 300 })
+  const ops: Op[] = [...cells].map(([nid, at]) => ({ op: 'setLayout', id: nid, at }))
+  edit(ops, { label: `arrange ${m.nodes[id]?.name ?? id}` })
 }
 
 export function focus(id: string | null): void {

@@ -10,7 +10,7 @@ import type { NodeMark } from './overlays.ts'
 import type { Model } from '@shared/model/schema.ts'
 import { nodeBox } from './box.ts'
 import { badgeText } from './HarpoonEdge.tsx'
-import { harpoonGeometry } from '@shared/geometry/harpoon.ts'
+import { RECIPROCAL_OFFSET, harpoonGeometry } from '@shared/geometry/harpoon.ts'
 import { ISO_SQUASH } from '@shared/geometry/hex.ts'
 import { placeBadges } from '@shared/geometry/tidy.ts'
 import type { BadgeInput } from '@shared/geometry/tidy.ts'
@@ -46,7 +46,7 @@ export function buildFlow(i: BuildInput): { nodes: (HexFlowNode | ZoneFlowNode)[
   // Markers on hidden nodes show on the nearest drawn container.
   const marks = new Map<string, NodeMark>()
   for (const [id, mk] of i.marks ?? []) {
-    const at = scene.nodes.has(id) ? id : ancestorsOf(m, id).find((a) => scene.nodes.has(a.id))?.id
+    const at = scene.nodes.has(id) ? id : (ancestorsOf(m, id).find((a) => scene.nodes.has(a.id))?.id ?? scene.folded.get(id))
     if (at === undefined) continue
     const prev = marks.get(at)
     if (prev === undefined || at === id) marks.set(at, at === id ? mk : { ...mk, title: `Inside: ${mk.title}` })
@@ -122,6 +122,7 @@ export function buildFlow(i: BuildInput): { nodes: (HexFlowNode | ZoneFlowNode)[
         expanded: sn.expanded,
         ghost: sn.ghost,
         childCount: childCount.get(id) ?? 0,
+        folded: sn.folded.map((f) => m.nodes[f]?.name ?? f),
         dim: (i.highlight !== null && !i.highlight.has(id)) || (i.lens !== null && (i.lens.marks.get(id)?.keys ?? []).every((k) => i.lens?.hidden.has(k) === true)),
         diff: diffKind.get(id) ?? null,
         health: i.health?.get(id) ?? null,
@@ -142,10 +143,10 @@ export function buildFlow(i: BuildInput): { nodes: (HexFlowNode | ZoneFlowNode)[
     const t = scene.nodes.get(e.target)
     const first = e.connectors[0]
     if (s === undefined || t === undefined || first === undefined) continue
-    const g = harpoonGeometry({ center: s.center, r: s.r, squash: sq(s.expanded) }, { center: t.center, r: t.r, squash: sq(t.expanded) }, { duplex: first.duplex })
+    const g = harpoonGeometry({ center: s.center, r: s.r, squash: sq(s.expanded) }, { center: t.center, r: t.r, squash: sq(t.expanded) }, { duplex: first.duplex, offset: e.reciprocal ? RECIPROCAL_OFFSET : 0 })
     const from = g.b !== null ? { x: (g.a.from.x + g.b.to.x) / 2, y: (g.a.from.y + g.b.to.y) / 2 } : g.a.from
     const to = g.b !== null ? { x: (g.a.to.x + g.b.from.x) / 2, y: (g.a.to.y + g.b.from.y) / 2 } : g.a.to
-    const text = badgeText({ connectors: e.connectors, dim: false, diff: null, emphasis: false, health: null, badgeT: 0.5 })
+    const text = badgeText({ connectors: e.connectors, dim: false, diff: null, emphasis: false, health: null, badgeT: 0.5, reciprocal: false })
     badgeInputs.push({ key: e.key, from, to, width: text.length * 6.2 + 14, height: 18 })
   }
   const obstacles = [...scene.nodes.values()].filter((n) => !n.expanded).map((n) => ({ center: n.center, r: n.r * 0.9 }))
@@ -171,6 +172,7 @@ export function buildFlow(i: BuildInput): { nodes: (HexFlowNode | ZoneFlowNode)[
         emphasis: i.emphasisConnectors !== null && ids.some((c) => i.emphasisConnectors?.has(c) === true),
         badgeT: badgeT.get(e.key) ?? 0.5,
         health,
+        reciprocal: e.reciprocal,
       },
     }
   })

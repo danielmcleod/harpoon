@@ -32,6 +32,9 @@ importers:
       '@tanstack/react-virtual':
         specifier: 3.13.12
         version: 3.13.12(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      elkjs:
+        specifier: 0.12.0
+        version: 0.12.0
     devDependencies:
       '@anthropic-ai/claude-agent-sdk':
         specifier: 0.3.289
@@ -90,9 +93,6 @@ importers:
       electron-vite:
         specifier: 5.0.0
         version: 5.0.0(vite@7.3.7(@types/node@24.19.2)(jiti@2.7.0)(lightningcss@1.32.0)(yaml@2.9.1))
-      elkjs:
-        specifier: 0.12.0
-        version: 0.12.0
       eslint:
         specifier: ^10.12.0
         version: 10.13.0(jiti@2.7.0)

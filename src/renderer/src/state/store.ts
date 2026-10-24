@@ -2,6 +2,7 @@
 // expanded nodes, focus). Mutations live in actions.ts; components read with selectors.
 import { create } from 'zustand'
 import type { AiMode, AiRunView, AiVendor, AppState, UserTools, Proposal, ProjectView, ProviderView, ThemeState, ToastLevel } from '@shared/ipc.ts'
+import type { SceneDetail } from '@shared/geometry/scene.ts'
 import type { Op } from '@shared/model/ops.ts'
 import type { BlastDirection } from '@shared/model/queries.ts'
 import type { FailureScope } from '@shared/model/resilience.ts'
@@ -27,6 +28,8 @@ export interface UiState {
   featureId: string | null
   /** Nodes drawn expanded in place. */
   expanded: Record<string, true>
+  /** Overview folds satellites into their owners and draws every node collapsed; full shows everything. */
+  detail: SceneDetail
   /** Focused subgraph (null: the whole system). */
   focusId: string | null
   /** Impact analysis; `failure`: what one failure takes down (instance, zone, the node) instead of the call graph. */
@@ -130,6 +133,7 @@ export const INITIAL_UI: UiState = {
   selection: null,
   featureId: null,
   expanded: {},
+  detail: 'full',
   focusId: null,
   blast: null,
   leftCollapsed: false,

@@ -15,6 +15,8 @@ export interface HexData extends Record<string, unknown> {
   expanded: boolean
   ghost: boolean
   childCount: number
+  /** Overview: names of the satellites folded into this node. */
+  folded: string[]
   /** Dimmed (blast-radius isolation, search miss). */
   dim: boolean
   /** Diff & Merge overlay. */
@@ -42,6 +44,8 @@ export interface HarpoonData extends Record<string, unknown> {
   /** Where along the line (0..1) the badge sits, chosen so badges do not overlap. */
   badgeT: number
   health: Health | null
+  /** The pair also has an edge the other way: draw this one shifted to its side. */
+  reciprocal: boolean
 }
 
 export type HarpoonFlowEdge = Edge<HarpoonData, 'harpoon'>

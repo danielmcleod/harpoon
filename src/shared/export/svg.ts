@@ -1,6 +1,6 @@
 // Picture exports from the scene: a standalone SVG (the same geometry the canvas draws: hexagons in either style,
 // harpoon connectors with barbs, badges, boundaries) and draw.io XML with hexagon shapes at the same positions.
-import { harpoonGeometry, harpoonPath } from '../geometry/harpoon.ts'
+import { RECIPROCAL_OFFSET, harpoonGeometry, harpoonPath } from '../geometry/harpoon.ts'
 import { ISO_DEPTH, ISO_SQUASH, hexCorners, pointsAttr } from '../geometry/hex.ts'
 import type { Point } from '../geometry/hex.ts'
 import { computeScene, sceneBounds } from '../geometry/scene.ts'
@@ -47,7 +47,7 @@ const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;'
 const f1 = (n: number): string => (Math.round(n * 10) / 10).toString()
 
 export function sceneFor(m: Model, v: ExportView): Scene {
-  return computeScene(m, { expanded: new Set(v.expanded), focusId: v.focusId, style: v.style })
+  return computeScene(m, { expanded: new Set(v.expanded), focusId: v.focusId, style: v.style, detail: v.detail ?? 'full' })
 }
 
 /** Change marks for a comparison: entities drawn in the diff colours (new green, changed amber, going red). */
@@ -126,7 +126,7 @@ export function renderSvg(m: Model, v: ExportView, marks?: SvgMarks, o: { cropTo
     const c = e.connectors[0]
     if (s === undefined || t === undefined || c === undefined) continue
     const sq = (expanded: boolean): number => (v.style === 'iso' && !expanded ? ISO_SQUASH : 1)
-    const g = harpoonGeometry({ center: s.center, r: s.r, squash: sq(s.expanded) }, { center: t.center, r: t.r, squash: sq(t.expanded) }, { duplex: c.duplex })
+    const g = harpoonGeometry({ center: s.center, r: s.r, squash: sq(s.expanded) }, { center: t.center, r: t.r, squash: sq(t.expanded) }, { duplex: c.duplex, offset: e.reciprocal ? RECIPROCAL_OFFSET : 0 })
     const mk = e.connectors.map((x) => marks?.connectors.get(x.id)).find((x) => x !== undefined)
     const color = mk !== undefined ? MARK_COLOR[mk] : pal.edge[protocolFamily(c.channelA.protocol)]
     const dash = c.status === 'planned' || mk === 'removed' ? ' stroke-dasharray="5 5"' : ''
