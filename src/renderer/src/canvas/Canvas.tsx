@@ -267,7 +267,13 @@ function CanvasInner({ overlays, children }: { overlays?: CanvasOverlays; childr
         }}
         onPaneClick={() => (useStore.getState().ui.connectFrom !== null ? cancelConnect() : select(null))}
         onNodeContextMenu={(e, n) => {
-          if (n.type === 'zone' || (n.data).ghost) return
+          if (n.type === 'zone') {
+            // Only a zone's label takes pointer events; its menu checks the zone.
+            e.preventDefault()
+            setMenu({ x: e.clientX, y: e.clientY, nodeId: n.id, boundaryId: (n.data as { boundary: { id: string } }).boundary.id })
+            return
+          }
+          if ((n.data).ghost) return
           e.preventDefault()
           setMenu({ x: e.clientX, y: e.clientY, nodeId: n.id })
         }}

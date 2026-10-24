@@ -12,11 +12,15 @@ import { getState, setUi } from '../state/store.ts'
 import { investigateTraffic } from '../sim/investigate.ts'
 import { problemsAbout, resolveWithAi } from '../ai/resolve.ts'
 import { startIn } from '../state/ai.ts'
+import { checkBoundaryWithAi } from '../ai/boundary.ts'
+import { lintModel } from '@shared/model/lint.ts'
 
 export interface MenuState {
   x: number
   y: number
   nodeId: string
+  /** A zone's menu (right-click on its label) instead of a node's. */
+  boundaryId?: string
 }
 
 export function NodeMenu({ menu, onClose }: { menu: MenuState; onClose: () => void }): React.JSX.Element | null {
@@ -37,6 +41,7 @@ export function NodeMenu({ menu, onClose }: { menu: MenuState; onClose: () => vo
 
   const s = getState()
   const m = s.project?.model
+  if (menu.boundaryId !== undefined) return <ZoneMenu menu={menu} boundaryId={menu.boundaryId} onClose={onClose} />
   const n = m?.nodes[menu.nodeId]
   if (m === undefined || n === undefined) return null
   const editable = s.ui.mode === 'edit'
@@ -118,6 +123,42 @@ export function NodeMenu({ menu, onClose }: { menu: MenuState; onClose: () => vo
             deleteSelection()
           })} />
         </>
+      )}
+    </div>
+  )
+}
+
+/** Right-click on a zone: show it, check it with AI, resolve what Harpoon reports about it. */
+function ZoneMenu({ menu, boundaryId, onClose }: { menu: MenuState; boundaryId: string; onClose: () => void }): React.JSX.Element | null {
+  const s = getState()
+  const m = s.project?.model
+  const b = m?.boundaries[boundaryId]
+  if (m === undefined || b === undefined) return null
+  const problems = lintModel(m).filter((p) => p.boundaryId === b.id)
+  const run = (fn: () => void) => (e: React.MouseEvent) => {
+    e.stopPropagation()
+    fn()
+    onClose()
+  }
+  const item = 'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent [&_svg]:size-3.5 [&_svg]:text-muted-foreground'
+  return (
+    <div
+      role="menu"
+      aria-label={`${b.name} actions`}
+      className="fixed z-50 w-56 rounded-lg border bg-popover p-1 shadow-xl"
+      style={{ left: Math.min(menu.x, window.innerWidth - 230), top: Math.min(menu.y, window.innerHeight - 160) }}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      <div className="truncate px-2 py-1 text-[11px] font-semibold text-muted-foreground">{b.name}</div>
+      <button type="button" role="menuitem" className={item} onPointerDown={(e) => e.stopPropagation()} onClick={run(() => select({ kind: 'boundary', ids: [b.id] }))}>
+        <PanelTopOpen />
+        Show details
+      </button>
+      {!isViewer() && s.ui.mode === 'edit' && (
+        <button type="button" role="menuitem" className={item} onPointerDown={(e) => e.stopPropagation()} onClick={run(() => checkBoundaryWithAi(b.id))}>
+          <Sparkles />
+          Check with AI{problems.length > 0 ? ` (${problems.length} found)` : ''}
+        </button>
       )}
     </div>
   )

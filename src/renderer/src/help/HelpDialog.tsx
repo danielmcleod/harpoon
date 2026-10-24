@@ -146,6 +146,7 @@ function Page({ topic }: { topic: HelpTopic }): React.JSX.Element {
               <><B>Propose solutions</B>: get two to four alternative designs with pros, cons and scores.</>,
               <><B>Document</B>, <B>Explain</B> and <B>Import repo</B> read the code to fill in, answer about or map the diagram.</>,
               <><B>Sync with code</B> brings the diagram in line with the code: it adds what is missing, retires what is gone (never deletes), marks planned work the code now has as built, leaves the rest of the plan alone, and tucks stray parts into the service they belong to.</>,
+              <><B>Check with AI</B> on a boundary (right-click its name on the canvas, or in its details) checks from the infrastructure code which nodes really run in that VPC, subnet or namespace, and proposes moving the ones that don&apos;t. Problems also flags empty zones, outside parties inside a network zone, members on the wrong level and nodes in two VPCs.</>,
               <><B>Scan for patterns</B> (Rules) suggests rules from the code&apos;s conventions; notes, decision records and Notion publishing use it too.</>,
             ]}
           />

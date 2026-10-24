@@ -5,6 +5,7 @@ import { entryNodes, reach, trafficBreaks } from '../sim/paths.ts'
 import { evaluateRules } from './rules.ts'
 import { satellitesOf } from './satellites.ts'
 import type { Model } from './schema.ts'
+import { boundaryProblems } from './boundaries.ts'
 
 export type Severity = 'error' | 'warn' | 'info'
 
@@ -86,6 +87,7 @@ export function lintModel(m: Model): Problem[] {
       if (m.nodes[id] === undefined) out.push({ severity: 'error', code: 'boundary-missing-node', message: `Boundary ${b.name} lists a node that does not exist (${id}).`, boundaryId: b.id })
     }
   }
+  out.push(...boundaryProblems(m))
   // Where traffic stops (shared with the simulator): the AI's validate_draft sees these while it builds.
   const TRAFFIC: Record<string, { code: string; severity: Severity }> = {
     'dead-end': { code: 'traffic-dead-end', severity: 'warn' },

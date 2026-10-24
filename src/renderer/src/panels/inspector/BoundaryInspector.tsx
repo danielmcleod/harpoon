@@ -1,5 +1,7 @@
 // A boundary zone: name, type, description and members.
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Sparkles, Trash2 } from 'lucide-react'
+import { checkBoundaryWithAi } from '../../ai/boundary.ts'
+import { AI_NOTE_SHORT } from '../../ai/AiNote.tsx'
 import { BOUNDARY_TYPES } from '@shared/model/schema.ts'
 import type { BoundaryPatch } from '@shared/model/schema.ts'
 import { Button } from '../../components/ui/Button.tsx'
@@ -38,6 +40,18 @@ export function BoundaryInspector({ id, readOnly }: { id: string; readOnly: bool
       <div className="border-b p-3">
         <div className="mb-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Boundary</div>
         <TextInput value={b.name} readOnly={readOnly} onChange={(v) => v.trim() !== '' && patch({ name: v }, 'name')} className="text-sm font-semibold" />
+        {!readOnly && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-2"
+            icon={<Sparkles />}
+            onClick={() => checkBoundaryWithAi(b.id)}
+            title={`The AI checks from the infrastructure code which nodes really run in this zone, and proposes fixes. ${AI_NOTE_SHORT}`}
+          >
+            Check with AI
+          </Button>
+        )}
       </div>
       <Section title="Details">
         <Row label="Type">
