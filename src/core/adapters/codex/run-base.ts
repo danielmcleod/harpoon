@@ -71,6 +71,8 @@ export interface RunTiming {
   sessionPersistMs: number
   /** error{willRetry:false} without a turn/completed within this ends the attempt. */
   fatalErrorWaitMs: number
+  /** How long an answer waits on its sub-agents before the pass ends anyway. */
+  backgroundMs: number
 }
 
 export const DEFAULT_TIMING: RunTiming = {
@@ -81,6 +83,7 @@ export const DEFAULT_TIMING: RunTiming = {
   exitAfterTerminalMs: EXIT_AFTER_TERMINAL_MS,
   sessionPersistMs: SESSION_PERSIST_TIMEOUT_MS,
   fatalErrorWaitMs: FATAL_ERROR_WAIT_MS,
+  backgroundMs: 30 * 60_000,
 }
 
 export const KILL_FOR_REASON: Record<StopReason, HarpoonKill> = {

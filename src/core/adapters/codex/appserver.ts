@@ -38,7 +38,7 @@ import {
 import type { ThreadInput } from './params.ts'
 import { REQUIRED_METHODS } from './protocol.ts'
 import { isCollaborationRejected, isPeerClosed, isPeerTimeout } from './rpc.ts'
-import type { Rec } from './wire.ts'
+import type { Rec, TurnStartParams } from './wire.ts'
 import { rec, str } from './wire.ts'
 
 /** The SandboxPolicy tag thread/start answers for each SandboxMode Harpoon asks for. */
@@ -111,6 +111,9 @@ export class CodexAppServerRun extends CodexRunBase {
   /** The Plan pass runs Codex's native plan mode (collaborationMode), as the probe allows. */
   readonly planNative: boolean
   #peer: JsonRpcPeer | undefined
+  /** The pass's turn/start parameters, for a follow-up turn with another message (sub-agents' reports). */
+  #turnParams: ((prompt: string) => TurnStartParams) | undefined
+  #waitTimer: NodeJS.Timeout | undefined
   #threadId: string | undefined
   /** turn/start was sent (a model call may be running). */
   #turnSent = false
@@ -224,7 +227,32 @@ export class CodexAppServerRun extends CodexRunBase {
 
   #apply(step: NormalizeStep): void {
     this.emit(step)
-    if (this.n.terminal) this.#afterTerminal()
+    if (this.n.terminal) {
+      clearTimeout(this.#waitTimer)
+      this.#afterTerminal()
+      return
+    }
+    // The turn ended while sub-agents still run: wait for them (capped), then continue the turn with their reports.
+    if (this.n.waiting && this.#waitTimer === undefined) {
+      this.#waitTimer = setTimeout(() => this.#apply(this.n.finishHeld()), this.timing.backgroundMs)
+      this.#waitTimer.unref()
+    }
+    if (step.subAgentsDone === true) void this.#continueAfterSubAgents()
+  }
+
+  /** Codex does not pick its sub-agents' reports up by itself: a new turn on the thread hands them over. */
+  async #continueAfterSubAgents(): Promise<void> {
+    const peer = this.#peer
+    const params = this.#turnParams
+    if (peer === undefined || params === undefined || peer.isClosed || this.#over()) return
+    this.n.newTurn()
+    try {
+      const turn = rec(await peer.request('turn/start', params(this.n.subAgentFollowUp()), { timeoutMs: this.timing.requestMs }))
+      const id = str(rec(turn?.['turn'])?.['id'])
+      if (id !== undefined) this.n.turnStarted(id)
+    } catch {
+      this.#apply(this.n.finishHeld())
+    }
   }
 
   #streamError(e: RpcStreamError): void {
@@ -366,15 +394,16 @@ export class CodexAppServerRun extends CodexRunBase {
     if (this.planNative && collaborationMode === undefined) {
       this.#apply(this.n.planFellBack('Codex did not name the model its plan mode needs'))
     }
-    const turnParams = () =>
+    const turnParams = (prompt = o.prompt): TurnStartParams =>
       turnStartParams({
         threadId,
-        prompt: o.prompt,
+        prompt,
         model: override,
         effort: o.effort ?? undefined,
         collaborationMode,
         outputSchema: o.outputSchema,
       })
+    this.#turnParams = (prompt) => turnParams(prompt)
     let turn: Rec | undefined
     try {
       this.#turnSent = true

@@ -42,6 +42,7 @@ import { breakdownFromExecUsage, usageFromTokenBreakdown } from './protocol.ts'
 import { choosePlan } from './plan.ts'
 import type { Rec } from './wire.ts'
 import { num, rec, str } from './wire.ts'
+import { addUsage, sumUsage } from '../usage.ts'
 
 /** `meta` signals a native plan's fallback (X12) and the plan's source (adapters/types.ts; the engine reads both). */
 export { META_PLAN_FALLBACK, META_PLAN_SOURCE }
@@ -102,6 +103,8 @@ export interface NormalizeStep {
    * with {@link CodexNormalizer.failNow} if it does not.
    */
   fatalPending?: boolean
+  /** The sub-agents a held answer waits on have all finished: the run handle continues the turn with their reports. */
+  subAgentsDone?: boolean
 }
 
 const emptyStep = (): NormalizeStep => ({ events: [], signals: [] })
@@ -146,6 +149,12 @@ export class CodexNormalizer {
   #modelReplaced: string | undefined
   /** The pass names no model: its step records the model that runs (META_MODEL_USED), a rerouted one too. */
   #modelTracked = false
+  /** Sub-agents (each on a thread of its own), by thread id: started and finished as Codex reports, and their last words. */
+  readonly #subAgents = new Map<string, { path: string; started: boolean; done: boolean; report: string }>()
+  /** Sub-agents' latest token totals (added to the pass's usage). */
+  readonly #subUsage = new Map<string, Usage>()
+  /** The turn ended while sub-agents still ran: the pass ends with a turn after they finish. */
+  #held = false
 
   constructor(o: NormalizerOptions) {
     this.#o = o
@@ -159,6 +168,31 @@ export class CodexNormalizer {
 
   get turnId(): string | undefined {
     return this.#turnId
+  }
+
+  /** The turn ended but its sub-agents still run (keep the app-server: Harpoon continues the turn when they finish). */
+  get waiting(): boolean {
+    return this.#held && !this.#terminal
+  }
+
+  /** End a held pass with the answer it has (the wait ran out, or the follow-up turn could not start). */
+  finishHeld(): NormalizeStep {
+    const step = emptyStep()
+    if (!this.#held || this.#terminal) return step
+    this.#held = false
+    this.#done(step)
+    return step
+  }
+
+  /** The follow-up turn's message: what each sub-agent reported. */
+  subAgentFollowUp(): string {
+    const parts = [...this.#subAgents.values()].filter((a) => a.started).map((a) => `### ${a.path}\n\n${a.report.trim() || '(no report)'}`)
+    return `Your sub-agents have finished. Their reports:\n\n${parts.join('\n\n')}\n\nContinue the task with these results, then give your final answer.`
+  }
+
+  /** A new turn is about to start on the thread (its turn/started names it). */
+  newTurn(): void {
+    this.#turnId = undefined
   }
 
   sessionId(): string | undefined {
@@ -263,6 +297,12 @@ export class CodexNormalizer {
     const step = emptyStep()
     if (this.#terminal) return step
     const p = rec(params) ?? {}
+    // A sub-agent's own thread: keep its report and token totals; the conversation shows the main thread only.
+    const thread = str(p['threadId'])
+    if (thread !== undefined && this.#sessionId !== undefined && thread !== this.#sessionId) {
+      this.#subAgentFrame(thread, method, p, step)
+      return step
+    }
     switch (method) {
       case 'item/agentMessage/delta': {
         const itemId = str(p['itemId']) ?? ''
@@ -371,9 +411,53 @@ export class CodexNormalizer {
     step.events.push({ type: 'text', delta })
   }
 
+  #subAgentFrame(thread: string, method: string, p: Rec, step: NormalizeStep): void {
+    const a = this.#subAgents.get(thread) ?? { path: 'sub-agent', started: false, done: false, report: '' }
+    this.#subAgents.set(thread, a)
+    if (method === 'item/completed') {
+      const item = rec(p['item'])
+      if (str(item?.['type']) === 'agentMessage') a.report = str(item?.['text']) ?? a.report
+    } else if (method === 'thread/tokenUsage/updated') {
+      const total = codexUsage(rec(p['tokenUsage'])?.['total'])
+      if (total !== undefined) this.#subUsage.set(thread, total)
+    }
+    step.signals.push({ type: 'liveness' })
+  }
+
+  /** subAgentActivity (an item of the main thread): a sub-agent started, or finished. */
+  #subAgentActivity(item: Rec, step: NormalizeStep): void {
+    const thread = str(item['agentThreadId'])
+    if (thread === undefined) return
+    const path = str(item['agentPath']) ?? 'sub-agent'
+    const kind = str(item['kind'])
+    const a = this.#subAgents.get(thread) ?? { path, started: false, done: false, report: '' }
+    a.path = path
+    this.#subAgents.set(thread, a)
+    const id = `subagent-${thread}`
+    if (kind === 'started' && !a.started) {
+      a.started = true
+      step.events.push({ type: 'tool', id, name: 'agent', summary: `Sub-agent ${path}`, phase: 'start' })
+    } else if ((kind === 'completed' || kind === 'interrupted') && !a.done) {
+      a.done = true
+      step.events.push({ type: 'tool', id, name: 'agent', summary: `Sub-agent ${path}`, phase: 'end', status: kind === 'completed' ? 'ok' : 'failed' })
+    } else return
+    this.#waitingSignal(step)
+    if (this.#held && this.#liveSubAgents().length === 0) step.subAgentsDone = true
+  }
+
+  #liveSubAgents(): string[] {
+    return [...this.#subAgents.values()].filter((a) => a.started && !a.done).map((a) => `sub-agent ${a.path}`)
+  }
+
+  #waitingSignal(step: NormalizeStep): void {
+    const live = this.#liveSubAgents()
+    if (this.#held || live.length > 0) step.signals.push({ type: 'waiting', tasks: live })
+  }
+
   #itemStarted(item: Rec | undefined, step: NormalizeStep): void {
     if (item === undefined) return
     const type = str(item['type'])
+    if (type === 'subAgentActivity') return this.#subAgentActivity(item, step)
     const id = str(item['id']) ?? ''
     if (type === 'fileChange') this.#changes.set(id, changePaths(item))
     const ev = toolStart(item, this.#o.cwd)
@@ -387,6 +471,7 @@ export class CodexNormalizer {
   #itemCompleted(item: Rec | undefined, step: NormalizeStep): void {
     if (item === undefined) return
     const type = str(item['type'])
+    if (type === 'subAgentActivity') return this.#subAgentActivity(item, step)
     const id = str(item['id']) ?? ''
     if (type === 'agentMessage') {
       const text = str(item['text']) ?? this.#msgText.get(id) ?? ''
@@ -426,6 +511,13 @@ export class CodexNormalizer {
   #turnCompleted(turn: Rec, frame: unknown, step: NormalizeStep): void {
     const status = str(turn['status'])
     if (status === 'completed') {
+      // Sub-agents still run: hold the answer; the run handle continues the turn with their reports when they finish.
+      if (this.#liveSubAgents().length > 0) {
+        this.#held = true
+        this.#waitingSignal(step)
+        return
+      }
+      this.#held = false
       this.#done(step)
       return
     }
@@ -492,7 +584,9 @@ export class CodexNormalizer {
         // Not JSON: the caller falls back to the final message (as for Claude's C18).
       }
     }
-    const usage = this.#delta(step)
+    let usage = this.#delta(step)
+    // Sub-agents ran on their own threads: their tokens count too.
+    if (usage !== undefined && this.#subUsage.size > 0) usage = addUsage(usage, sumUsage([...this.#subUsage.values()]))
     step.events.push(usage !== undefined ? { type: 'done', result, usage } : { type: 'done', result })
   }
 
@@ -611,6 +705,12 @@ export class CodexNormalizer {
     const step = emptyStep()
     this.#rejectPending(step)
     if (this.#terminal) return step
+    // Stopped or gone while waiting on sub-agents: the answer it gave still stands.
+    if (this.#held) {
+      this.#held = false
+      this.#done(step)
+      return step
+    }
     if (this.#killedBy !== undefined) {
       this.#harpoonError(step)
       return step
