@@ -5,7 +5,7 @@ import { StickyNote } from 'lucide-react'
 import { BaseEdge, EdgeLabelRenderer, useInternalNode } from '@xyflow/react'
 import type { EdgeProps, InternalNode } from '@xyflow/react'
 import { memo } from 'react'
-import { harpoonGeometry, harpoonPath } from '@shared/geometry/harpoon.ts'
+import { RECIPROCAL_OFFSET, harpoonGeometry, harpoonPath } from '@shared/geometry/harpoon.ts'
 import type { HexShape } from '@shared/geometry/harpoon.ts'
 import { protocolFamily } from '@shared/model/kinds.ts'
 import { cn } from '../lib/cn.ts'
@@ -48,6 +48,7 @@ function HarpoonEdgeImpl({ id, source, target, data, selected }: EdgeProps<Harpo
     duplex: first.duplex,
     sourcePort: single && first.source === source ? first.sourcePort : null,
     targetPort: single && first.target === target ? first.targetPort : null,
+    offset: data.reciprocal ? RECIPROCAL_OFFSET : 0,
   })
   const family = protocolFamily(first.channelA.protocol)
   const color =

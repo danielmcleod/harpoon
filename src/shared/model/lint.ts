@@ -3,6 +3,7 @@ import { arrivalRank, channelEncrypted, dataClassCatalog, dataClassLabel, dataSc
 import { ancestorsOf, descendantIds, isSelfOrAncestor } from './queries.ts'
 import { entryNodes, reach, trafficBreaks } from '../sim/paths.ts'
 import { evaluateRules } from './rules.ts'
+import { satellitesOf } from './satellites.ts'
 import type { Model } from './schema.ts'
 
 export type Severity = 'error' | 'warn' | 'info'
@@ -45,6 +46,11 @@ export function lintModel(m: Model): Problem[] {
         out.push({ severity: 'info', code: 'feature-no-endpoint', message: `${n.name} › ${f.name} has no endpoint or signature.`, nodeId: n.id })
       }
     }
+  }
+
+  // Top-level parts that only one service uses belong inside it (imports leave many of them at the top).
+  for (const [id, owner] of satellitesOf(m)) {
+    out.push({ severity: 'info', code: 'stray-node', message: `${name(id)} is only used by ${name(owner)}; move it inside ${name(owner)}.`, nodeId: id })
   }
 
   // Duplicate names among siblings.

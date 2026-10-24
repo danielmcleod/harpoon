@@ -36,6 +36,7 @@ export async function saveCurrentView(name: string, notes = ''): Promise<void> {
     order: views.length === 0 ? 0 : Math.max(...views.map((v) => v.order)) + 1,
     focusId: s.ui.focusId,
     expanded: Object.keys(s.ui.expanded),
+    detail: s.ui.detail,
     nodeStyle: s.prefs.nodeStyle,
     flowId: s.ui.flowId,
     blast: s.ui.blast === null ? null : { id: s.ui.blast.id, dir: s.ui.blast.dir },
@@ -76,6 +77,7 @@ export function applyView(v: SavedView): void {
   setUi((ui) => ({
     focusId: exists(v.focusId) ? v.focusId : null,
     expanded: Object.fromEntries(v.expanded.filter((id) => m.nodes[id] !== undefined).map((id) => [id, true as const])),
+    detail: v.detail ?? 'full',
     flowId: v.flowId !== null && m.flows[v.flowId] !== undefined ? v.flowId : null,
     blast: v.blast !== null && m.nodes[v.blast.id] !== undefined ? { ...v.blast, hops: Infinity } : null,
     asOf: v.asOf !== null && m.meta.phases.some((p) => p.id === v.asOf) ? v.asOf : null,
@@ -112,7 +114,7 @@ export function startRoadmapPresentation(): void {
   if (m === undefined) return
   const phases = [...m.meta.phases].sort((a, b) => a.order - b.order)
   if (phases.length === 0) return toast('Add roadmap phases first (Project settings → Roadmap phases).', 'info')
-  const base = { notes: '', order: 0, focusId: null, expanded: [], nodeStyle: null, flowId: null, blast: null, camera: null }
+  const base = { notes: '', order: 0, focusId: null, expanded: [], detail: null, nodeStyle: null, flowId: null, blast: null, camera: null }
   const planned = Object.values(m.nodes).filter((n) => n.status === 'planned' || n.status === 'in-progress').length
   const steps: SavedView[] = [
     { ...base, id: 'roadmap-today', name: `${m.meta.name} today`, notes: planned > 0 ? `${planned} planned components shown dotted.` : '', asOf: null },

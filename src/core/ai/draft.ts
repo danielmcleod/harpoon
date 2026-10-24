@@ -1,10 +1,12 @@
 // An AI run's draft: the model as it was when the run started, plus the ops the agent has staged through Harpoon's
 // MCP tools. Nothing touches the live project until a person accepts the resulting proposal.
 import { coordKey, nearestFreeCell } from '../../shared/geometry/hex.ts'
+import { arrangeLevel } from '../../shared/geometry/tidy.ts'
 import { compareModels, diffModels } from '../../shared/model/diff.ts'
 import type { ChangeSummary } from '../../shared/model/diff.ts'
 import { slugify, uniqueId } from '../../shared/model/ids.ts'
 import { applyOps } from '../../shared/model/ops.ts'
+import { ancestorsOf } from '../../shared/model/queries.ts'
 import type { Op } from '../../shared/model/ops.ts'
 import type { HexCoord, Model } from '../../shared/model/schema.ts'
 
@@ -99,32 +101,32 @@ export class Draft {
   }
 
   /**
-   * Move nodes that were added without a hint next to the siblings they connect to (the agent never gives
-   * coordinates, and existing nodes never move).
+   * Arrange the nodes that were added without a hint (the agent never gives coordinates), one call per level for all
+   * of the run's new nodes there, next to what they connect to, including partners in other levels. Existing nodes
+   * never move.
    */
   settlePlacement(): void {
-    const ops: Op[] = []
+    const byLevel = new Map<string | null, Set<string>>()
     for (const id of this.#unplaced) {
-      const m = this.#model
-      const n = m.nodes[id]
+      const n = this.#model.nodes[id]
       if (n === undefined) continue
-      const partners = Object.values(m.connectors)
-        .flatMap((c) => (c.source === id ? [c.target] : c.target === id ? [c.source] : []))
-        .map((p) => m.nodes[p])
-        .filter((p) => p !== undefined && p.parentId === n.parentId && m.layout[p.id] !== undefined)
-      if (partners.length === 0) continue
-      const cells = partners.map((p) => m.layout[p?.id ?? ''] as HexCoord)
-      const avg = { q: Math.round(cells.reduce((s, c) => s + c.q, 0) / cells.length), r: Math.round(cells.reduce((s, c) => s + c.r, 0) / cells.length) }
-      const taken = new Set(
-        Object.values(m.nodes)
-          .filter((x) => x.parentId === n.parentId && x.id !== id)
-          .map((x) => m.layout[x.id])
-          .filter((c): c is HexCoord => c !== undefined)
-          .map(coordKey),
-      )
-      const at = nearestFreeCell(avg, (c) => taken.has(coordKey(c)))
-      ops.push({ op: 'setLayout', id, at })
-      this.#model = applyOps(this.#model, [{ op: 'setLayout', id, at }]).model
+      byLevel.set(n.parentId, (byLevel.get(n.parentId) ?? new Set()).add(id))
+    }
+    // Outer levels first: an inner level's anchors depend on where its container ended up.
+    const depth = (p: string | null): number => (p === null ? 0 : 1 + ancestorsOf(this.#model, p).length)
+    const ops: Op[] = []
+    for (const [parentId, ids] of [...byLevel].sort((a, b) => depth(a[0]) - depth(b[0]))) {
+      const m = this.#model
+      const cells = arrangeLevel(m, parentId, { movable: ids, placeholders: ids, timeLimitMs: 250 })
+      const level: Op[] = []
+      for (const id of ids) {
+        const at = cells.get(id)
+        const was = m.layout[id]
+        if (at !== undefined && (was === undefined || was.q !== at.q || was.r !== at.r)) level.push({ op: 'setLayout', id, at })
+      }
+      if (level.length === 0) continue
+      this.#model = applyOps(this.#model, level).model
+      ops.push(...level)
     }
     this.#unplaced.clear()
     this.#ops.push(...ops)

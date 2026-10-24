@@ -3,6 +3,7 @@
 import type { Rule } from './model/rules.ts'
 import type { Op } from './model/ops.ts'
 import type { Model } from './model/schema.ts'
+import type { SceneDetail } from './geometry/scene.ts'
 import type { Approvals } from './run.ts'
 
 export const CMD_CHANNEL = 'harpoon:cmd'
@@ -641,6 +642,8 @@ export interface SavedView {
   order: number
   focusId: string | null
   expanded: string[]
+  /** Overview folds satellites into their owners (null / absent: full, as in older views). */
+  detail?: SceneDetail | null
   nodeStyle: NodeStyle | null
   flowId: string | null
   blast: { id: string; dir: 'upstream' | 'downstream' | 'both' } | null
@@ -673,6 +676,8 @@ export type ExportFormat =
 export interface ExportView {
   focusId: string | null
   expanded: string[]
+  /** Default full. */
+  detail?: SceneDetail
   style: NodeStyle
   theme: ResolvedTheme
   /** Include working notes (left out of shared exports by default). */

@@ -58,11 +58,15 @@ export function depthOf(m: Model, id: string): number {
 
 /**
  * The node a connector endpoint is drawn at: the endpoint itself when visible, else its nearest visible ancestor.
- * `visible(id)` says whether a node is on screen (its parent chain is expanded / within the focused subgraph).
+ * `visible(id)` says whether a node is on screen (its parent chain is expanded / within the focused subgraph);
+ * `folded` maps nodes folded into another one (Overview) to the node that stands for them.
  */
-export function liftEndpoint(m: Model, id: string, visible: (id: string) => boolean): string | null {
-  if (visible(id)) return id
-  for (const a of ancestorsOf(m, id)) if (visible(a.id)) return a.id
+export function liftEndpoint(m: Model, id: string, visible: (id: string) => boolean, folded?: ReadonlyMap<string, string>): string | null {
+  for (const x of [id, ...ancestorsOf(m, id).map((a) => a.id)]) {
+    if (visible(x)) return x
+    const into = folded?.get(x)
+    if (into !== undefined && visible(into)) return into
+  }
   return null
 }
 
@@ -73,24 +77,27 @@ export interface LiftedEdge {
   target: string
   /** The model connectors drawn as this edge (several when lifting merges them). */
   connectors: HxConnector[]
+  /** A drawn edge also runs the other way on this pair (target → source): draw the two side by side. */
+  reciprocal: boolean
 }
 
 /**
  * Connectors as drawn: endpoints lifted to visible nodes; connectors that end up inside one node (both ends in the
  * same collapsed subtree) disappear; several that land on the same pair merge into one drawn edge.
  */
-export function liftedEdges(m: Model, visible: (id: string) => boolean): LiftedEdge[] {
+export function liftedEdges(m: Model, visible: (id: string) => boolean, folded?: ReadonlyMap<string, string>): LiftedEdge[] {
   const out = new Map<string, LiftedEdge>()
   for (const c of Object.values(m.connectors)) {
-    const s = liftEndpoint(m, c.source, visible)
-    const t = liftEndpoint(m, c.target, visible)
+    const s = liftEndpoint(m, c.source, visible, folded)
+    const t = liftEndpoint(m, c.target, visible, folded)
     if (s === null || t === null || s === t) continue
     // One drawn edge per unordered pair would hide direction; keep direction, so A→B and B→A stay separate.
     const key = `${s}→${t}`
     const e = out.get(key)
-    if (e === undefined) out.set(key, { key, source: s, target: t, connectors: [c] })
+    if (e === undefined) out.set(key, { key, source: s, target: t, connectors: [c], reciprocal: false })
     else e.connectors.push(c)
   }
+  for (const e of out.values()) e.reciprocal = out.has(`${e.target}→${e.source}`)
   return [...out.values()]
 }
 

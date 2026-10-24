@@ -17,6 +17,7 @@ export const ViewZ = z.object({
   order: z.number().default(0),
   focusId: z.string().nullable().default(null),
   expanded: z.array(z.string()).max(2000).default([]),
+  detail: z.enum(['overview', 'full']).nullable().default(null),
   nodeStyle: z.enum(['flat', 'iso']).nullable().default(null),
   flowId: z.string().nullable().default(null),
   blast: z.object({ id: z.string(), dir: z.enum(['upstream', 'downstream', 'both']) }).nullable().default(null),

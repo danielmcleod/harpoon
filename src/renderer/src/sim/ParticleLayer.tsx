@@ -3,7 +3,7 @@
 // follows health. Positions come from the same harpoon geometry as the edges, so dots ride exactly on the lines.
 import { useStore as useFlowStore } from '@xyflow/react'
 import { useEffect, useMemo, useRef } from 'react'
-import { harpoonGeometry, pointAlong } from '@shared/geometry/harpoon.ts'
+import { RECIPROCAL_OFFSET, harpoonGeometry, pointAlong } from '@shared/geometry/harpoon.ts'
 import type { HarpoonLine } from '@shared/geometry/harpoon.ts'
 import { ISO_SQUASH } from '@shared/geometry/hex.ts'
 import type { Scene } from '@shared/geometry/scene.ts'
@@ -35,7 +35,7 @@ export function ParticleLayer({ scene }: { scene: Scene }): React.JSX.Element {
       const first = e.connectors[0]
       if (s === undefined || t === undefined || first === undefined) continue
       const sq = (expanded: boolean): number => (scene.style === 'iso' && !expanded ? ISO_SQUASH : 1)
-      const g = harpoonGeometry({ center: s.center, r: s.r, squash: sq(s.expanded) }, { center: t.center, r: t.r, squash: sq(t.expanded) }, { duplex: first.duplex })
+      const g = harpoonGeometry({ center: s.center, r: s.r, squash: sq(s.expanded) }, { center: t.center, r: t.r, squash: sq(t.expanded) }, { duplex: first.duplex, offset: e.reciprocal ? RECIPROCAL_OFFSET : 0 })
       out.push({ ids: e.connectors.map((c) => c.id), target: e.target, a: g.a, b: g.b, family: protocolFamily(first.channelA.protocol), async: first.sync === 'async' })
     }
     return out

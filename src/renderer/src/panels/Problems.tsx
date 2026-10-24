@@ -1,13 +1,13 @@
 // Architecture lint (shared/model/lint.ts): problems worth a look, each one a click away from what it is about, with a
 // one-click fix where no judgement is needed and an AI run (one, the ones ticked, or all) for the rest.
-import { CircleAlert, Info, Sparkles, TriangleAlert, Wrench } from 'lucide-react'
+import { CircleAlert, FolderInput, Info, Sparkles, TriangleAlert, Wrench } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { lintModel } from '@shared/model/lint.ts'
 import type { Problem, Severity } from '@shared/model/lint.ts'
-import { quickFix } from '@shared/model/quickfix.ts'
+import { moveAllStraysOps, quickFix } from '@shared/model/quickfix.ts'
 import { Button } from '../components/ui/Button.tsx'
 import { cn } from '../lib/cn.ts'
-import { edit, select, setMode } from '../state/actions.ts'
+import { edit, select, setMode, toast } from '../state/actions.ts'
 import { setUi, useStore } from '../state/store.ts'
 import { useModel } from '../canvas/useScene.ts'
 import { reveal } from './ArchitectureTree.tsx'
@@ -36,6 +36,7 @@ export function Problems(): React.JSX.Element {
   const [ticked, setTicked] = useState<Set<string>>(new Set())
   if (problems.length === 0) return <p className="text-xs text-muted-foreground">No problems found.</p>
   const chosen = problems.filter((p) => ticked.has(problemKey(p)))
+  const strays = problems.filter((p) => p.code === 'stray-node').length
   const toggle = (p: Problem): void =>
     setTicked((s) => {
       const n = new Set(s)
@@ -51,6 +52,19 @@ export function Problems(): React.JSX.Element {
           <Button size="sm" variant="outline" icon={<Sparkles />} onClick={() => resolveAll(model)} title={`The AI checks the code for each problem (and availability gap), then proposes fixes. ${AI_NOTE_SHORT}`}>
             Resolve all with AI
           </Button>
+          {strays > 1 && (
+            <Button
+              size="sm"
+              variant="outline"
+              icon={<FolderInput />}
+              title="Move every top-level part that only one service uses inside that service (no AI, undoable)"
+              onClick={() => {
+                if (edit(moveAllStraysOps(model), { label: 'move strays inside their owners' })) toast(`Moved ${strays} parts inside the services that use them. Undo to put them back.`)
+              }}
+            >
+              Move all strays inside their owners
+            </Button>
+          )}
           {chosen.length > 0 && (
             <Button size="sm" variant="outline" icon={<Sparkles />} onClick={() => resolveWithAi(chosen)}>
               Resolve selected ({chosen.length})

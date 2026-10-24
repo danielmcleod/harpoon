@@ -143,6 +143,16 @@ function HexNodeImpl({ data, selected }: NodeProps<HexFlowNode>): React.JSX.Elem
         </button>
       )}
 
+      {data.folded.length > 0 && !ghost && (
+        <span
+          className="pointer-events-none absolute flex h-[18px] items-center rounded-full border border-dashed bg-popover px-1.5 text-[10px] font-semibold whitespace-nowrap text-muted-foreground shadow-sm"
+          style={{ left: box.center.x - r * 0.95, top: box.center.y + (style === 'flat' ? r * 0.55 : r * 0.3) }}
+          title={`Overview: ${data.folded.join(', ')} ${data.folded.length === 1 ? 'is' : 'are'} only used by ${n.name} and drawn inside it. Switch Detail to Full to see ${data.folded.length === 1 ? 'it' : 'them'}.`}
+        >
+          +{data.folded.length} inside
+        </span>
+      )}
+
       {impact !== null && (
         <span
           className="pointer-events-none absolute rounded-full px-1.5 text-[9.5px] font-bold text-white shadow"

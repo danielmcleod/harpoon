@@ -7,7 +7,7 @@ import { uniqueId } from '@shared/model/ids.ts'
 import { KIND_INFO } from '@shared/model/kinds.ts'
 import type { Op } from '@shared/model/ops.ts'
 import { descendantIds } from '@shared/model/queries.ts'
-import { tidyLevel } from '@shared/geometry/tidy.ts'
+import { arrangeLevel } from '@shared/geometry/tidy.ts'
 import { ChannelZ, ConnectorZ, NodeZ } from '@shared/model/schema.ts'
 import type { HexCoord, HxNode, Model, NodeKind } from '@shared/model/schema.ts'
 
@@ -64,8 +64,9 @@ export function moveOps(m: Model, scene: Scene, moves: readonly { id: string; ce
 }
 
 /**
- * Tidy layout for what is on screen: the canvas level and every expanded container's inner level. Only nodes that
- * move get a setLayout op.
+ * Tidy layout for what is on screen: the canvas level and every expanded container's inner level, each arranged with
+ * the containers at their drawn size and the lines that leave the level counted. Nodes hidden by Overview stay put.
+ * Only nodes that move get a setLayout op.
  */
 export function tidyOps(m: Model, scene: Scene): Op[] {
   const levels = new Map<string | null, Map<string, HexCoord>>()
@@ -79,9 +80,14 @@ export function tidyOps(m: Model, scene: Scene): Op[] {
     cells.set(n.id, n.cell)
     levels.set(parent, cells)
   }
+  const expanded = new Set([...scene.nodes.values()].filter((n) => n.expanded).map((n) => n.id))
   const ops: Op[] = []
   for (const [parent, cells] of levels) {
-    for (const [id, at] of tidyLevel(m, parent, cells)) ops.push({ op: 'setLayout', id, at })
+    const arranged = arrangeLevel(m, parent, { expanded, focusId: scene.focusId, current: cells, movable: new Set(cells.keys()), timeLimitMs: Math.max(80, 700 / levels.size) })
+    for (const [id, at] of arranged) {
+      const was = cells.get(id) ?? m.layout[id]
+      if (was === undefined || was.q !== at.q || was.r !== at.r) ops.push({ op: 'setLayout', id, at })
+    }
   }
   return ops
 }

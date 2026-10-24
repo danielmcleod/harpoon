@@ -1,8 +1,8 @@
-// Floating canvas controls: breadcrumbs when a subgraph is focused, zoom controls, the blast-radius banner, and a
-// legend of line styles.
+// Floating canvas controls: breadcrumbs when a subgraph is focused, zoom controls, the detail level (Overview folds
+// small parts into the service that uses them), Tidy, the blast-radius banner, and a legend of line styles.
 import { RoadmapBar } from './RoadmapBar.tsx'
 import { Panel, useReactFlow } from '@xyflow/react'
-import { Box, Cable, ChevronRight, Expand, Hexagon, Home, Minus, Plus, Shrink, Wand2 } from 'lucide-react'
+import { Box, Cable, ChevronRight, Expand, Hexagon, Home, LayoutGrid, Minus, Network, Plus, Shrink, Wand2 } from 'lucide-react'
 import { cn } from '../lib/cn.ts'
 import { ancestorsOf } from '@shared/model/queries.ts'
 import { Button } from '../components/ui/Button.tsx'
@@ -24,6 +24,8 @@ export function CanvasChrome(): React.JSX.Element {
   // The simulator's transport bar takes the bottom centre: keep the corners compact.
   const sim = useStore((s) => s.ui.mode === 'sim')
   const nodeStyle = useStore((s) => s.prefs.nodeStyle)
+  const detail = useStore((s) => s.ui.detail)
+  const overview = detail === 'overview'
   const crumbs = focusId === null ? [] : [...ancestorsOf(model, focusId).reverse(), model.nodes[focusId]].filter((n) => n !== undefined)
 
   const expandAll = (): void => {
@@ -88,13 +90,24 @@ export function CanvasChrome(): React.JSX.Element {
               <Box className="size-3.5" />
             </button>
           </div>
+          <span className="mx-0.5 h-4 w-px bg-border" />
+          <div role="radiogroup" aria-label="Detail" className="flex items-center">
+            <button type="button" role="radio" aria-checked={overview} title="Overview: small parts only one service uses are folded into it, and every node is drawn collapsed" onClick={() => setUi({ detail: 'overview' })} className={cn('flex items-center gap-1 rounded px-1.5 py-1 text-xs', overview ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground')}>
+              <Network className="size-3.5" />
+              Overview
+            </button>
+            <button type="button" role="radio" aria-checked={!overview} title="Full detail: every node, expanded where you opened it" onClick={() => setUi({ detail: 'full' })} className={cn('flex items-center gap-1 rounded px-1.5 py-1 text-xs', !overview ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground')}>
+              <LayoutGrid className="size-3.5" />
+              Full
+            </button>
+          </div>
           {!sim && editable && (
             <Button
               variant="ghost"
               size="sm"
               className="h-7 text-xs"
               icon={<Wand2 />}
-              title="Re-arrange what is on screen to shorten lines and stop them crossing or running through nodes (undoable)"
+              title="Arrange what is on screen: callers left, callees right, shorter lines that stop crossing or running through nodes, containers at their drawn size (undoable)"
               onClick={() => {
                 const ops = tidyOps(model, scene)
                 if (ops.length === 0) toast('Already tidy.')
@@ -104,7 +117,7 @@ export function CanvasChrome(): React.JSX.Element {
               Tidy
             </Button>
           )}
-          {!sim && (
+          {!sim && !overview && (
             <>
               <span className="mx-0.5 h-4 w-px bg-border" />
               <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={expandedCount > 0 ? () => setUi({ expanded: {} }) : expandAll} icon={expandedCount > 0 ? <Shrink /> : <Expand />}>
