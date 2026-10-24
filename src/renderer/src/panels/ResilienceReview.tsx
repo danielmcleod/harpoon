@@ -57,7 +57,7 @@ export function ResilienceReview({ readOnly }: { readOnly: boolean }): React.JSX
             icon={<Sparkles />}
             disabled={ticked.length === 0}
             onClick={() =>
-              void ask(`Propose fixes for these availability gaps:\n${ticked.map((f) => `- ${f.message}${f.nodeId !== null ? ` (node id ${f.nodeId})` : ''}`).join('\n')}`, { fresh: true, mode: 'resilience' })
+              void ask(`Propose fixes for these availability gaps:\n${ticked.map((f) => `- ${f.message}${f.nodeId !== null ? ` (node id ${f.nodeId})` : ''}`).join('\n')}`, { mode: 'resilience' })
             }
             title="The AI checks the real deployment in the code and infrastructure, then stages planned fixes for review"
           >

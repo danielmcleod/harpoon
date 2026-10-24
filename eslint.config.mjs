@@ -18,6 +18,8 @@ export default tseslint.config(
   {
     ignores: [
       'node_modules/',
+      // Claude Code worktrees (other sessions' checkouts of this repo).
+      '.claude/',
       'out/',
       'dist/',
       'coverage/',

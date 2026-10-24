@@ -134,6 +134,20 @@ export type Provenance = z.infer<typeof ProvenanceZ>
 export const DocLinkZ = z.object({ title: ShortText, url: Text(2000) })
 export type DocLink = z.infer<typeof DocLinkZ>
 
+/** Where planned work is tracked outside Harpoon: an issue, story or ticket. */
+export const TRACKERS = ['github', 'linear', 'jira', 'gitlab', 'azure', 'other'] as const
+export const IssueLinkZ = z.object({
+  url: Text(2000),
+  /** As the tracker shows it: `LIN-123`, `#42`, `PAY-7`. */
+  key: ShortText,
+  title: Text(500).default(''),
+  tracker: z.enum(TRACKERS).default('other'),
+  /** Last known state (null: not checked). */
+  state: z.enum(['open', 'closed']).nullable().default(null),
+  checkedAt: z.number().nullable().default(null),
+})
+export type IssueLink = z.infer<typeof IssueLinkZ>
+
 // ---- features ----------------------------------------------------------------------------------------------
 
 export const ContractZ = z.object({ kind: z.enum(CONTRACT_KINDS), body: Text(50_000) })
@@ -160,6 +174,7 @@ export const FeatureZ = z.object({
   status: z.enum(STATUSES).default('existing'),
   /** Roadmap phase in which this feature's status change lands. */
   phase: Nullable(IdZ),
+  issues: z.array(IssueLinkZ).max(20).default([]),
 })
 export type Feature = z.infer<typeof FeatureZ>
 
@@ -231,6 +246,8 @@ const nodeShape = {
   tags: z.array(ShortText).max(50),
   features: z.array(FeatureZ).max(500),
   docs: z.array(DocLinkZ).max(100),
+  /** Issues tracking this work (planned or in progress) outside Harpoon. */
+  issues: z.array(IssueLinkZ).max(50),
   evidence: z.array(EvidenceZ).max(200),
   provenance: N(ProvenanceZ),
   /** AI confidence 0..1 (null: human-authored). */
@@ -262,6 +279,7 @@ export const NodeZ = z.object(
     tags: [],
     features: [],
     docs: [],
+    issues: [],
     evidence: [],
     provenance: null,
     confidence: null,
@@ -325,6 +343,8 @@ const connectorShape = {
   policies: PoliciesZ,
   dependency: z.enum(DEPENDENCIES),
   status: z.enum(STATUSES),
+  /** Issues tracking this work (planned or in progress) outside Harpoon. */
+  issues: z.array(IssueLinkZ).max(50),
   evidence: z.array(EvidenceZ).max(200),
   provenance: N(ProvenanceZ),
   confidence: N(z.number().min(0).max(1)),
@@ -346,6 +366,7 @@ export const ConnectorZ = z.object(
     policies: PoliciesZ.parse({}),
     dependency: 'hard',
     status: 'existing',
+    issues: [],
     evidence: [],
     provenance: null,
     confidence: null,

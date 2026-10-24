@@ -30,7 +30,9 @@ import {
   SENSITIVITIES,
   STATUSES,
 } from '../../shared/model/schema.ts'
-import type { Evidence, HxConnector, HxNode, Model, ProvenanceSource } from '../../shared/model/schema.ts'
+import type { Evidence, HxConnector, HxNode, IssueLink, Model, ProvenanceSource } from '../../shared/model/schema.ts'
+import { IssueLinkZ, TRACKERS } from '../../shared/model/schema.ts'
+import { trackerOf } from '../../shared/model/issues.ts'
 import { EFFORTS, NOTE_ACTIONS, NOTE_ITEM_KINDS } from '../../shared/ipc.ts'
 import type { NoteAction, NoteItemKind } from '../../shared/ipc.ts'
 import { RuleZ, ruleProblem } from '../../shared/model/rules.ts'
@@ -91,6 +93,9 @@ export interface ToolContext {
   onHighlight: (nodeIds: string[], note: string | null) => void
   onSubmit: (p: { title: string; rationale: string; risks: string | null }) => void
   onAsk: (questions: { id: string; question: string; options: string[]; why: string | null; multi: boolean }[]) => void
+  /** The project's notes and records, read by reference (requests name them instead of pasting them). */
+  readNote?: (path: string) => Promise<{ path: string; title: string; date: string | null; body: string }>
+  readRecord?: (kind: 'decision' | 'comparison', id: string) => Promise<unknown>
   /** What a tool call did, in words (the AI panel's activity list). */
   onActivity: (a: { tool: string; summary: string; ok: boolean }) => void
 }
@@ -101,6 +106,9 @@ const ok = (v: unknown): ToolResult => ({ content: [{ type: 'text', text: typeof
 const fail = (msg: string): ToolResult => ({ isError: true, content: [{ type: 'text', text: msg }] })
 
 /** Run a tool body; model refusals and zod errors become tool errors with a readable message. */
+/** read_note returns long notes in parts of this many characters. */
+const NOTE_PART = 20_000
+
 async function guard(fn: () => ToolResult | Promise<ToolResult>): Promise<ToolResult> {
   try {
     return await fn()
@@ -282,6 +290,8 @@ function describe(tool: string, a: Record<string, unknown>, r: ToolResult, d: Dr
       return `Flow ${String(a['name'])}`
     case 'get_node':
       return `Read ${nm(a['id'])}`
+    case 'link_issue':
+      return `Linked ${String(a['key'])} to ${nm(a['nodeId'] ?? a['connectorId'])}`
     case 'search':
       return `Searched “${String(a['query'])}”`
     case 'submit_proposal':
@@ -1036,6 +1046,80 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
         }),
       ),
   )
+
+  server.registerTool(
+    'link_issue',
+    {
+      description:
+        'Record the issue (or story, ticket) that tracks a planned node, one of its features, or a connector, in the user\'s tracker. Same url again: updates it (title, state). Create the issue with the tracker\'s own tools first.',
+      inputSchema: {
+        nodeId: z.string().optional().describe('The node (with featureId: that feature of it)'),
+        featureId: z.string().optional(),
+        connectorId: z.string().optional(),
+        url: z.string().url().max(2000).describe('https link to the issue'),
+        key: z.string().min(1).max(60).describe('As the tracker shows it: LIN-123, #42, PAY-7'),
+        title: z.string().max(500).optional(),
+        tracker: z.enum(TRACKERS).optional(),
+        state: z.enum(['open', 'closed']).optional(),
+      },
+      annotations: draftWrite,
+    },
+    (a) =>
+      guard(() => {
+        if (!/^https:\/\//i.test(a.url)) return fail('Issue links must be https URLs.')
+        const link = IssueLinkZ.parse({ url: a.url, key: a.key, title: a.title ?? '', tracker: a.tracker ?? trackerOf(a.url), state: a.state ?? null, checkedAt: a.state !== undefined ? Date.now() : null })
+        const merge = (list: IssueLink[]): IssueLink[] => (list.some((x) => x.url === link.url) ? list.map((x) => (x.url === link.url ? { ...x, ...link, title: link.title || x.title } : x)) : [...list, link])
+        if (a.connectorId !== undefined) {
+          const id = d.connectorRef(a.connectorId)
+          const c = d.model.connectors[id]
+          if (c === undefined) return fail(`Unknown connector "${a.connectorId}".`)
+          stage([{ op: 'updateConnector', id, patch: { issues: merge(c.issues) } }])
+          return ok({ linked: link.key, connector: id })
+        }
+        if (a.nodeId === undefined) return fail('Pass nodeId (and featureId for a feature) or connectorId.')
+        const id = d.nodeRef(a.nodeId)
+        const n = d.model.nodes[id]
+        if (n === undefined) return fail(`Unknown node "${a.nodeId}".`)
+        if (a.featureId !== undefined) {
+          if (!n.features.some((f) => f.id === a.featureId)) return fail('No such feature.')
+          stage([{ op: 'updateNode', id, patch: { features: n.features.map((f) => (f.id === a.featureId ? { ...f, issues: merge(f.issues) } : f)) } }])
+          return ok({ linked: link.key, node: id, feature: a.featureId })
+        }
+        stage([{ op: 'updateNode', id, patch: { issues: merge(n.issues) } }])
+        return ok({ linked: link.key, node: id })
+      }),
+  )
+
+  if (ctx.readNote !== undefined) {
+    const readNote = ctx.readNote
+    server.registerTool(
+      'read_note',
+      {
+        description: "Read one of the project's notes (meeting notes, project notes) by the path a request names, e.g. \"weekly/2026-10-20.md\". Long notes come back in parts: pass offset to read on.",
+        inputSchema: { path: z.string().min(1).max(500), offset: z.number().int().min(0).optional().describe('Character offset to continue from') },
+        annotations: ro,
+      },
+      ({ path, offset }) =>
+        guard(async () => {
+          const n = await readNote(path)
+          const from = offset ?? 0
+          const part = n.body.slice(from, from + NOTE_PART)
+          return ok({ path: n.path, title: n.title, date: n.date, body: part, ...(from + NOTE_PART < n.body.length ? { more: true, nextOffset: from + NOTE_PART } : {}) })
+        }),
+    )
+  }
+  if (ctx.readRecord !== undefined) {
+    const readRecord = ctx.readRecord
+    server.registerTool(
+      'get_record',
+      {
+        description: 'Read a decision record (by id, e.g. "adr-0003") or a comparison of solutions (by id) that a request names.',
+        inputSchema: { kind: z.enum(['decision', 'comparison']), id: z.string().min(1).max(200) },
+        annotations: ro,
+      },
+      ({ kind, id }) => guard(async () => ok((await readRecord(kind, id)) ?? { error: 'not found' })),
+    )
+  }
 
   if (ctx.mode === 'solutions') registerSolutionTools(server, ctx, draftWrite, ro)
   if (ctx.mode === 'scan') registerScanTools(server, ctx, draftWrite)

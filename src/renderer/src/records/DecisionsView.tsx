@@ -10,8 +10,8 @@ import { cn } from '../lib/cn.ts'
 import { invoke } from '../ipc/client.ts'
 import { toast } from '../state/actions.ts'
 import { AI_NOTE_SHORT } from '../ai/AiNote.tsx'
-import { setAiMode } from '../state/ai.ts'
-import { setUi, useStore } from '../state/store.ts'
+import { startIn } from '../state/ai.ts'
+import { useStore } from '../state/store.ts'
 import { CompareView } from './CompareView.tsx'
 import { DECISION_STATUS_STYLE, DecisionEditor } from './DecisionEditor.tsx'
 import { newDecision, openRecord } from './decide.ts'
@@ -73,8 +73,7 @@ export function DecisionsView(): React.JSX.Element {
                 icon={<Sparkles />}
                 title={`Describe what you need; the AI designs alternatives to compare. ${AI_NOTE_SHORT}`}
                 onClick={() => {
-                  setAiMode('solutions')
-                  setUi({ aiOpen: true })
+                  startIn('solutions')
                 }}
               >
                 Propose solutions

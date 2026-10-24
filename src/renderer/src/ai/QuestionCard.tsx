@@ -74,11 +74,11 @@ export function QuestionCard({ runId, questions }: { runId: string; questions: A
           icon={<Send />}
           disabled={!complete}
           loading={sending}
-          onClick={() => void send(`Answers:\n${questions.map((q, i) => `${i + 1}. ${q.question}\n   → ${answerOf(q)}`).join('\n')}\n\nNow design the change.`)}
+          onClick={() => void send(`Answers:\n${questions.map((q, i) => `${i + 1}. ${q.question}\n   → ${answerOf(q)}`).join('\n')}\n\nNow go on with the request.`)}
         >
           Send answers
         </Button>
-        <Button size="sm" variant="ghost" disabled={sending} onClick={() => void send('Just decide: pick sensible defaults for anything open, list your assumptions in the rationale, and design the change.')}>
+        <Button size="sm" variant="ghost" disabled={sending} onClick={() => void send('Just decide: pick sensible defaults for anything open, list your assumptions, and go on with the request.')}>
           Just decide
         </Button>
       </div>

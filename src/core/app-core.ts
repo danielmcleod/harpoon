@@ -104,7 +104,7 @@ export async function createCore(o: CoreOptions): Promise<Core> {
       return r.install ? installCodexPlugin(paths.home, o.bridge) : { dir: await writeCodexMarketplace(paths.home, o.bridge), steps: [] }
     },
     'ai.start': (r) => ai.start(r),
-    'ai.send': (r) => ai.send(r.runId, r.prompt, r.tools),
+    'ai.send': (r) => ai.send(r.runId, r.prompt, r.tools, r.selection),
     'ai.tools': (r) => listUserTools(r.force === true),
     'ai.delete': (r) => ai.remove(r.runId),
     'ai.clear': () => ai.clear(),

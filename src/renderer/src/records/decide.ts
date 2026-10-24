@@ -93,7 +93,7 @@ export async function draftWithAi(rec: DecisionRecord, extra = ''): Promise<void
     if (v.trim() !== '') lines.push(`${k}:\n${v}`)
   }
   if (extra.trim() !== '') lines.push(`Notes:\n${extra}`)
-  await ask(lines.join('\n\n'), { fresh: true, mode: 'decision', context: { decisionId: rec.id, ...(rec.solutionSetId !== null ? { solutionSetId: rec.solutionSetId } : {}) } })
+  await ask(lines.join('\n\n'), { mode: 'decision', context: { decisionId: rec.id, ...(rec.solutionSetId !== null ? { solutionSetId: rec.solutionSetId } : {}) } })
 }
 
 /** The parts a decision is about that are planned or being built become existing (one undoable edit). */
@@ -114,5 +114,5 @@ export function markBuilt(entityIds: readonly string[]): void {
 
 /** Have the CLI's own plan mode plan how to build a decision (or an accepted proposal) in the codebase. */
 export function planImplementation(context: { decisionId?: string; proposalId?: string }): void {
-  void ask('', { fresh: true, mode: 'implement', context })
+  void ask('', { mode: 'implement', context })
 }

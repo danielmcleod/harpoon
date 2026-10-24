@@ -11,6 +11,7 @@ import { edit, focus, select, startConnect, toggleExpanded } from '../state/acti
 import { getState, setUi } from '../state/store.ts'
 import { investigateTraffic } from '../sim/investigate.ts'
 import { problemsAbout, resolveWithAi } from '../ai/resolve.ts'
+import { startIn } from '../state/ai.ts'
 
 export interface MenuState {
   x: number
@@ -94,7 +95,7 @@ export function NodeMenu({ menu, onClose }: { menu: MenuState; onClose: () => vo
       {!isViewer() && (
         <Item icon={<Sparkles />} label="Ask AI about this…" onClick={run(() => {
           select({ kind: 'node', ids: [n.id] })
-          setUi({ aiOpen: true })
+          startIn('explain')
         })} />
       )}
       {editable && problemCount > 0 && (

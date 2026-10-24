@@ -75,19 +75,34 @@ const MODE_FRAME: Record<AiMode, string> = {
   resilience: `Mode: RESILIENCE REVIEW. Improve the availability of the parts named below (single points of failure, missing failover or backups, hard dependencies without timeouts or fallbacks). First confirm from the code and infrastructure how each is really deployed and record it (resilience fields); some may already be fine. For each real gap, stage planned changes: more instances or zones, automatic failover, replicas or backups for data stores, timeouts, retries and circuit breakers, a queue or cache to decouple, a soft dependency with a fallback. Mark new things and changed settings "planned" and set the roadmap phase the user names. Explain each fix, its cost and the risk it removes in the rationale. Never claim something is resilient without evidence.`,
   resolve: `Mode: RESOLVE PROBLEMS. Fix the problems Harpoon reports that are named below (or, if none are named, the ones list_problems returns). Call list_problems first for the exact problems with their ids. For each one, find out from the code and infrastructure what is true before changing anything: the real protocol or auth a client uses, whether a node is really unconnected or its links are missing, which phase planned work belongs in, whether a cycle is real. Then stage the fix (add or correct connectors, protocols, auth, vendors, endpoints, phases; reverse links; remove what no longer exists). Never invent facts to silence a check: if the code does not settle a problem, leave it and say what is needed. Call validate_draft (its "resolved" list shows what your draft clears) and check_traffic, then submit_proposal with a rationale that lists each problem as fixed (and how) or left (and why).`,
   implement: `Mode: PLAN THE IMPLEMENTATION. The architecture work below has been decided; plan how to build it in this codebase. Read the code first: where each part lives, the patterns and libraries it already uses, how it is tested, built and deployed. Then write the implementation plan: the order of work in small, shippable steps; for each step the files and modules to create or change and what changes; data migrations and backfills; configuration, infrastructure and secrets to add (names only, never values); tests to write or update; how to roll it out safely (feature flags, dual writes, canaries) and roll back; risks and open questions; and a rough size per step. Follow the project's guidelines. Ground it in the actual code (name real files), and say where you are unsure. Present the plan when it is complete.`,
-  drift: `Mode: DRIFT CHECK. Compare the diagram with the code in this repository. Stage corrections where the code clearly differs (missing services or connectors, removed ones, wrong protocols), each with evidence. Explain the differences in the rationale, grouped by severity. Do not touch fields the user locked.`,
+  track: `Mode: TRACK WORK. The planned work named below should be tracked in the team's issue tracker. Use the tracker tools you have from the user (Linear, GitHub, Jira…); if you have none, say so and stop. For each item without an issue: create one issue or story (a clear title, what to build and why, the parts of the architecture involved by name, the roadmap phase, and the decision when there is one), then record it on the item with link_issue (url, key, title). Before creating, search the tracker for an existing issue about the same work and link that instead. For items that already have issues, check them and update their state with link_issue. Do not change anything else in the diagram. Then submit_proposal once with a rationale listing each item and its issue.`,
+  drift: `Mode: SYNC WITH CODE. Bring the diagram in line with the code in the project's repositories, keeping the work the team has planned. Call get_overview and list_problems first, then read the code and infrastructure.
+- Add what the code has that the diagram lacks (services, inner parts, data stores, queues, connectors with protocols, main features), with evidence.
+- Existing things the code no longer has: set status "deprecated" with evidence and say why; never delete them.
+- Planned or in-progress things: they are intentional. Leave them as they are when the code does not have them yet. When the code now has one, set it to "in-progress" (partly built) or "existing" (built), citing the evidence.
+- Correct what the code clearly contradicts (wrong protocols, directions, auth, owners), with evidence.
+- Tidy the structure: a top-level node that only one service uses and that belongs to it (its cache, database, worker, module or process) moves inside that service (update_node parentId); retarget its connectors and merge duplicates. Keep shared and external things at the top level.
+- If some nodes link to issues in a tracker you have tools for, check those issues: say which planned items are done or closed there.
+Do not touch fields the user locked. Call validate_draft, then submit_proposal once, with the rationale grouped as Added, Built, Retired, Corrected, Restructured and Left as planned.`,
 }
 
 export function firstPrompt(o: { mode: AiMode; prompt: string; selection: AiSelection; model: Model }): string {
-  const m = o.model
+  const request = o.prompt.trim() === '' ? defaultRequest(o.mode) : o.prompt.trim()
+  return [MODE_FRAME[o.mode], conventions(o.mode, o.model), scopeLine(o.selection, o.model), `Request:\n${request}`].filter((x) => x !== '').join('\n\n')
+}
+
+/** "Context: …" for what the user selected or is looking inside ('' for nothing). */
+export function scopeLine(sel: AiSelection, m: Model): string {
   const names = (ids: string[]): string => ids.map((id) => `${m.nodes[id]?.name ?? id} (${id})`).join(', ')
   const scope: string[] = []
-  if (o.selection.focusId !== null) scope.push(`The user is looking inside ${names([o.selection.focusId])}.`)
-  if (o.selection.nodeIds.length > 0) scope.push(`Selected nodes: ${names(o.selection.nodeIds)}.`)
-  if (o.selection.connectorIds.length > 0) scope.push(`Selected connectors: ${o.selection.connectorIds.join(', ')}.`)
-  const request = o.prompt.trim() === '' ? defaultRequest(o.mode) : o.prompt.trim()
-  return [MODE_FRAME[o.mode], conventions(o.mode, m), scope.length > 0 ? `Context: ${scope.join(' ')}` : '', `Request:\n${request}`].filter((x) => x !== '').join('\n\n')
+  if (sel.focusId !== null) scope.push(`The user is looking inside ${names([sel.focusId])}.`)
+  if (sel.nodeIds.length > 0) scope.push(`Selected nodes: ${names(sel.nodeIds.slice(0, 40))}${sel.nodeIds.length > 40 ? ` and ${sel.nodeIds.length - 40} more` : ''}.`)
+  if (sel.connectorIds.length > 0) scope.push(`Selected connectors: ${sel.connectorIds.slice(0, 40).join(', ')}${sel.connectorIds.length > 40 ? ` and ${sel.connectorIds.length - 40} more` : ''}.`)
+  return scope.length > 0 ? `Context: ${scope.join(' ')}` : ''
 }
+
+/** Past this, conventions go in by name only (get_rules has the rest). */
+const CONVENTIONS_INLINE_MAX = 2000
 
 /** The project's guidelines and rules, for passes that design (they should follow them). */
 function conventions(mode: AiMode, m: Model): string {
@@ -95,9 +110,17 @@ function conventions(mode: AiMode, m: Model): string {
   const gl = m.meta.guidelines.filter((g) => g.enabled)
   const rules = m.meta.rules.filter((r) => r.enabled)
   if (gl.length === 0 && rules.length === 0) return ''
-  return [
+  const full = [
     gl.length > 0 ? `Project guidelines (follow them in what you design):\n${gl.map((g) => `- ${g.title}${g.text !== '' ? `: ${g.text}` : ''}`).join('\n')}` : '',
     rules.length > 0 ? `Project rules (validate_draft checks them):\n${rules.map((r) => `- ${r.name}${r.description !== '' ? `: ${r.description}` : ''}`).join('\n')}` : '',
+  ]
+    .filter((x) => x !== '')
+    .join('\n\n')
+  if (full.length <= CONVENTIONS_INLINE_MAX) return full
+  // Many or long conventions: their names, and get_rules for the text (it is a tool call away).
+  return [
+    gl.length > 0 ? `Project guidelines (follow them; call get_rules for their text): ${gl.map((g) => g.title).join('; ')}.` : '',
+    rules.length > 0 ? `Project rules (validate_draft checks them): ${rules.map((r) => r.name).join('; ')}.` : '',
   ]
     .filter((x) => x !== '')
     .join('\n\n')
@@ -110,7 +133,9 @@ export function defaultRequest(mode: AiMode): string {
     case 'document':
       return 'Document the selected nodes (or the whole system if nothing is selected).'
     case 'drift':
-      return 'Check the whole diagram against the code.'
+      return 'Sync the whole diagram with the code.'
+    case 'track':
+      return 'Create issues for the planned work that is not tracked yet.'
     case 'explain':
       return 'Give a short tour of this architecture.'
     case 'plan':

@@ -26,7 +26,7 @@ It runs your own Claude Code on this computer, with your account and its Notion 
   if (!ok) return
   setUi({ settings: null, aiOpen: true })
   setVendor('claude')
-  await ask('', { fresh: true, mode: 'publish' })
+  await ask('', { mode: 'publish' })
 }
 
 const openSettingsNotion = (): void => setUi({ settings: 'notion' })

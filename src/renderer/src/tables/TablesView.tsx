@@ -31,6 +31,7 @@ import { cellText, changeRows, dependencyMatrix, connectorRows, dataRows, endpoi
 import { DependencyMatrixView } from './MatrixView.tsx'
 import { applySaved, patchTab, setTab, toSaved, useTables } from './tableStore.ts'
 import type { ViewTab } from './tableStore.ts'
+import { trackWithAi, untracked } from '../ai/track.ts'
 
 const TAB_LABEL: Record<ViewTab, string> = { services: 'Services', connectors: 'Connectors', endpoints: 'Endpoints', data: 'Data', changes: 'Changes', problems: 'Problems', matrix: 'Matrix' }
 const VIEW_TABS: readonly ViewTab[] = [...TABLE_TABS, 'matrix']
@@ -240,9 +241,16 @@ function Toolbar({ tab, table }: { tab: TableTab; table: Table<{ id: string }> |
   const menu = 'z-50 min-w-48 rounded-lg border bg-popover p-1 text-xs shadow-lg'
   const item = 'flex cursor-default items-center gap-2 rounded px-2 py-1.5 outline-none data-[highlighted]:bg-accent'
   // Problems: hand what the table shows (after search and filters) to the AI.
+  const model = useModel()
+  const untrackedWork = tab === 'changes' ? untracked(model, changeRows(model).map((r) => ({ kind: r.entity, id: r.entityId, ...(r.nodeId !== null && r.entity === 'feature' ? { nodeId: r.nodeId } : {}) }))) : []
   const shownProblems = tab === 'problems' && table !== null ? table.getFilteredRowModel().flatRows.map((r) => (r.original as { problem?: Problem }).problem).filter((p): p is Problem => p !== undefined) : []
   return (
     <div className="flex items-center gap-1.5">
+      {tab === 'changes' && editable && untrackedWork.length > 0 && (
+        <Button size="sm" variant="outline" icon={<Sparkles />} onClick={() => void trackWithAi(untrackedWork)} title={`Create issues in your tracker for planned work that has none, and link them. ${AI_NOTE_SHORT}`}>
+          Create issues for untracked ({untrackedWork.length})
+        </Button>
+      )}
       {tab === 'problems' && editable && shownProblems.length > 0 && (
         <Button size="sm" variant="outline" icon={<Sparkles />} onClick={() => resolveWithAi(shownProblems)} title={`The AI checks the code for each problem shown, then proposes fixes. ${AI_NOTE_SHORT}`}>
           Resolve shown with AI ({shownProblems.length})
@@ -448,6 +456,11 @@ function BulkBar({ tab, editable }: { tab: TableTab; editable: boolean }): React
             </option>
           ))}
         </select>
+      )}
+      {tab === 'changes' && targets.length > 0 && (
+        <Button size="sm" variant="outline" icon={<Sparkles />} onClick={() => void trackWithAi(targets)} title={`Create (or check) the issues for this work in your tracker, and link them. ${AI_NOTE_SHORT}`}>
+          Create issues with AI ({targets.length})
+        </Button>
       )}
       <Button size="sm" variant="ghost" onClick={() => patchTab(tab, { selected: {} })}>
         Clear selection

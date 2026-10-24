@@ -155,7 +155,7 @@ export const useStore = create<StoreState>(() => ({
   ready: false,
   save: { status: 'saved', at: null, error: null },
   theme: { theme: 'dark', resolved: 'dark' },
-  prefs: { schemaVersion: 1, theme: 'dark', nodeStyle: 'flat', recentProjects: [], repoPaths: {}, designsDir: '', notionServers: {}, ai: { vendor: null, claude: { model: null, effort: null }, codex: { model: null, effort: null } }, externalMcp: { enabled: false, port: 47821, token: null }, implement: { approvals: 'acceptEdits', git: 'repo', branchTemplate: 'harpoon/{slug}', plansDir: '.harpoon/plans', askTimeoutMin: 30 } },
+  prefs: { schemaVersion: 1, theme: 'dark', nodeStyle: 'flat', recentProjects: [], repoPaths: {}, designsDir: '', notionServers: {}, ai: { vendor: null, claude: { model: null, effort: null }, codex: { model: null, effort: null }, tools: { claude: {}, codex: {} } }, externalMcp: { enabled: false, port: 47821, token: null }, implement: { approvals: 'acceptEdits', git: 'repo', branchTemplate: 'harpoon/{slug}', plansDir: '.harpoon/plans', askTimeoutMin: 30 } },
   project: null,
   ui: INITIAL_UI,
   ai: INITIAL_AI,

@@ -94,7 +94,7 @@ export function ResilienceSection({ node: n, readOnly }: { node: HxNode; readOnl
               findings.length > 0
                 ? `Fix the availability gaps of ${n.name} (id ${n.id}):\n${findings.map((f) => `- ${f.message}`).join('\n')}`
                 : `Find out from the code and infrastructure how ${n.name} (id ${n.id}) is deployed, record it, and propose fixes for any gap.`,
-              { fresh: true, mode: 'resilience' },
+              { mode: 'resilience', scope: { nodeIds: [n.id], connectorIds: [], focusId: null } },
             )
           }}
         >

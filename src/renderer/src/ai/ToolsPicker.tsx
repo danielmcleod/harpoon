@@ -1,9 +1,11 @@
 // The AI panel's Tools: the user's own MCP servers and connectors (Linear, GitHub, Jira…) the conversation may use,
-// for follow-ups such as "create a Linear issue for this plan". Off unless picked; each CLI has its own.
+// for follow-ups such as "create a Linear issue for this plan". Off unless picked, or set to always on in Settings →
+// AI → Tools; each CLI has its own.
 import { Plug, RefreshCw, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '../lib/cn.ts'
 import { loadUserTools } from '../state/ai.ts'
+import { alwaysOn } from './toolHints.ts'
 import { setAi, useStore } from '../state/store.ts'
 
 export function ToolsPicker({ disabled }: { disabled?: boolean }): React.JSX.Element {
@@ -12,8 +14,11 @@ export function ToolsPicker({ disabled }: { disabled?: boolean }): React.JSX.Ele
   const vendor = useStore((s) => s.ai.vendor)
   const picked = useStore((s) => s.ai.tools)
   const all = useStore((s) => s.ai.userTools)
+  const prefs = useStore((s) => s.prefs.ai.tools[vendor])
   const box = useRef<HTMLDivElement>(null)
-  const list = all?.[vendor] ?? []
+  const list = (all?.[vendor] ?? []).filter((t) => prefs[t.name] !== 'off')
+  const always = alwaysOn(list, prefs)
+  const on = [...new Set([...picked, ...always])]
 
   useEffect(() => {
     if (!open) return
@@ -39,12 +44,12 @@ export function ToolsPicker({ disabled }: { disabled?: boolean }): React.JSX.Ele
         onClick={() => setOpen((x) => !x)}
         aria-expanded={open}
         title="Let this conversation use some of your own tools (Linear, GitHub, Jira…) through your CLI"
-        className={cn('flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10.5px] disabled:opacity-50', picked.length > 0 ? 'border-primary/60 bg-primary/10 text-foreground' : 'text-muted-foreground hover:text-foreground')}
+        className={cn('flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10.5px] disabled:opacity-50', on.length > 0 ? 'border-primary/60 bg-primary/10 text-foreground' : 'text-muted-foreground hover:text-foreground')}
       >
         <Plug className="size-3" />
-        Tools{picked.length > 0 ? ` (${picked.length})` : ''}
+        Tools{on.length > 0 ? ` (${on.length})` : ''}
       </button>
-      {picked.length > 0 && <span className="min-w-0 truncate text-[10.5px] text-muted-foreground">{picked.map(label).join(', ')}</span>}
+      {on.length > 0 && <span className="min-w-0 truncate text-[10.5px] text-muted-foreground">{on.map(label).join(', ')}</span>}
       {open && (
         <div className="absolute bottom-full left-0 z-50 mb-1 w-80 rounded-lg border bg-popover p-2 text-xs shadow-lg">
           <div className="mb-1 flex items-center gap-2">
@@ -66,7 +71,8 @@ export function ToolsPicker({ disabled }: { disabled?: boolean }): React.JSX.Ele
             </button>
           </div>
           <p className="mb-2 text-[11px] text-muted-foreground">
-            The AI can act in these under your account, for example create an issue for a plan. They are off unless ticked, and apply to this conversation&apos;s next messages.
+            The AI can act in these under your account, for example create an issue for a plan. Tick them for this conversation; Settings → AI → Tools turns
+            one on for every conversation, or off.
           </p>
           {checking && list.length === 0 && <p className="text-muted-foreground">Asking your CLI…</p>}
           {!checking && list.length === 0 && (
@@ -78,8 +84,11 @@ export function ToolsPicker({ disabled }: { disabled?: boolean }): React.JSX.Ele
             {list.map((t) => (
               <li key={t.name}>
                 <label className={cn('flex items-center gap-2 rounded px-1 py-1 hover:bg-accent/50', !t.ok && 'opacity-60')}>
-                  <input type="checkbox" checked={picked.includes(t.name)} onChange={() => toggle(t.name)} />
-                  <span className="min-w-0 flex-1 truncate">{t.label}</span>
+                  <input type="checkbox" checked={on.includes(t.name)} disabled={always.includes(t.name)} onChange={() => toggle(t.name)} />
+                  <span className="min-w-0 flex-1 truncate">
+                    {t.label}
+                    {always.includes(t.name) ? <span className="text-muted-foreground"> (always)</span> : null}
+                  </span>
                   <span className="text-[10px] text-muted-foreground">{t.kind === 'connector' ? 'connector' : t.kind === 'apps' ? 'apps' : 'server'}{t.ok ? '' : ' · not connected'}</span>
                 </label>
               </li>

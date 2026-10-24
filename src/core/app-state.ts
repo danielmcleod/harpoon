@@ -5,7 +5,7 @@ import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { z } from 'zod'
 import type { AiDefaults, AppState, AppStatePatch, ImplementSettings, RecentProject } from '../shared/ipc.ts'
-import { AI_VENDORS, GIT_POLICIES, NODE_STYLES, THEMES } from '../shared/ipc.ts'
+import { AI_VENDORS, GIT_POLICIES, NODE_STYLES, THEMES, TOOL_USES } from '../shared/ipc.ts'
 import { APPROVALS } from '../shared/run.ts'
 import { readJsonFile, writeJsonAtomic } from './store/atomic.ts'
 
@@ -17,7 +17,9 @@ export const DEFAULT_DESIGNS_DIR = join(homedir(), 'Documents', 'Harpoon')
 /** Outside agents' MCP endpoint listens here unless the user picks another port. */
 export const DEFAULT_EXTERNAL_MCP_PORT = 47821
 
-const DEFAULT_AI: AiDefaults = { vendor: null, claude: { model: null, effort: null }, codex: { model: null, effort: null } }
+const DEFAULT_AI: AiDefaults = { vendor: null, claude: { model: null, effort: null }, codex: { model: null, effort: null }, tools: { claude: {}, codex: {} } }
+
+const ToolUsesZ = z.record(z.string().max(200), z.enum(TOOL_USES)).catch({})
 
 export const DEFAULT_PLANS_DIR = '.harpoon/plans'
 
@@ -55,7 +57,15 @@ const AppStateZ = z.object({
   repoPaths: z.record(z.string(), z.record(z.string(), z.string())).catch({}).default({}),
   designsDir: z.string().min(1).catch(DEFAULT_DESIGNS_DIR).default(DEFAULT_DESIGNS_DIR),
   notionServers: z.record(z.string(), z.string()).catch({}).default({}),
-  ai: z.object({ vendor: z.enum(AI_VENDORS).nullable().catch(null), claude: PickZ, codex: PickZ }).catch(DEFAULT_AI).default(DEFAULT_AI),
+  ai: z
+    .object({
+      vendor: z.enum(AI_VENDORS).nullable().catch(null),
+      claude: PickZ,
+      codex: PickZ,
+      tools: z.object({ claude: ToolUsesZ, codex: ToolUsesZ }).catch({ claude: {}, codex: {} }).default({ claude: {}, codex: {} }),
+    })
+    .catch(DEFAULT_AI)
+    .default(DEFAULT_AI),
   externalMcp: z
     .object({ enabled: z.boolean().catch(false), port: z.number().int().min(1024).max(65535).catch(DEFAULT_EXTERNAL_MCP_PORT), token: z.string().min(32).max(200).nullable().catch(null) })
     .catch({ enabled: false, port: DEFAULT_EXTERNAL_MCP_PORT, token: null })

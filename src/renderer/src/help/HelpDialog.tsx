@@ -142,7 +142,8 @@ function Page({ topic }: { topic: HelpTopic }): React.JSX.Element {
             items={[
               <><B>Plan a change</B>: describe an addition; it lands as planned nodes for you to review.</>,
               <><B>Propose solutions</B>: get two to four alternative designs with pros, cons and scores.</>,
-              <><B>Document</B>, <B>Explain</B>, <B>Import repo</B> and <B>Drift check</B> read the code to fill in, answer about, map or check the diagram.</>,
+              <><B>Document</B>, <B>Explain</B> and <B>Import repo</B> read the code to fill in, answer about or map the diagram.</>,
+              <><B>Sync with code</B> brings the diagram in line with the code: it adds what is missing, retires what is gone (never deletes), marks planned work the code now has as built, leaves the rest of the plan alone, and tucks stray parts into the service they belong to.</>,
               <><B>Scan for patterns</B> (Rules) suggests rules from the code&apos;s conventions; notes, decision records and Notion publishing use it too.</>,
             ]}
           />
@@ -158,6 +159,21 @@ function Page({ topic }: { topic: HelpTopic }): React.JSX.Element {
             Requests appear in the conversation to allow or deny. For git it follows the repository&apos;s own instructions (CLAUDE.md, AGENTS.md, skills) by default, or
             creates a branch, or works in a separate worktree; it never pushes unless those instructions say to. When background work it started (a long test run, a sub-agent)
             is still going, the conversation waits for it and carries on.
+          </P>
+          <P>
+            Pick what to do and write your request in the box at the bottom to <B>start</B> a conversation (buttons elsewhere, like Resolve with AI or Plan the
+            implementation, start one too). Once it runs, the bottom becomes a <B>reply box</B> for that conversation only: what you select on the canvas can go along
+            (the Include pill), and a reply typed while it works is sent when it finishes. <B>New chat</B> (or Esc in an empty reply box) goes back to starting
+            something new. Under each of your messages, <B>Context sent</B> shows exactly what the AI received.
+          </P>
+          <P>
+            <B>Tracked work.</B> Planned and in-progress parts can link to the issues (stories, tickets) that track them: Tracked in the inspector, and the Tracked
+            column in Tables → Changes. <B>Create issues with AI</B> (ticked rows, all untracked work, a decision, or one part) has the AI create them in your tracker
+            through your own Linear, GitHub or Jira tools and link them, as a proposal you accept. Sync with code checks linked issues too.
+          </P>
+          <P>
+            <B>Your tools.</B> Settings → AI → Tools sets each of your CLI&apos;s tools to Off, Suggest or Always on. Suggested tools appear as a one-click chip when your
+            message mentions them (&quot;create a Linear issue…&quot;); always-on tools are part of every conversation.
           </P>
           <P>
             Conversations are kept on this computer for each project (the latest 50, never in the project folder), so they are still there after you close

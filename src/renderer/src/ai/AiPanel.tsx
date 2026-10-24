@@ -6,10 +6,12 @@ import { edit } from '../state/actions.ts'
 import { openRecord } from '../records/decide.ts'
 import { Bot, ChevronDown, CircleAlert, History, Loader2, NotebookPen, Plus, RefreshCw, Scale, ScanSearch, ScrollText, Send, Square, Wrench, X, Trash2, CheckCheck, Copy, FileDown, FolderOpen, Hammer, ShieldQuestion } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { AiAsk, AiMode, AiRunView } from '@shared/ipc.ts'
+import type { AiAsk, AiMode, AiRunView, AiSelection } from '@shared/ipc.ts'
 import { Button } from '../components/ui/Button.tsx'
 import { cn } from '../lib/cn.ts'
-import { answerAsk, ask, cancelRun, clearHistory, copyText, deleteConversation, loadProviders, newConversation, openImplement, removeWorktree, savePlan, setAiMode, setVendor } from '../state/ai.ts'
+import { loadUserTools } from '../state/ai.ts'
+import { answerAsk, ask, canvasSelection, cancelRun, clearHistory, copyText, deleteConversation, loadProviders, newConversation, openImplement, removeWorktree, reply, savePlan, setAiMode, setVendor } from '../state/ai.ts'
+import { ToolHint } from './ToolHint.tsx'
 import { invoke } from '../ipc/client.ts'
 import { markBuilt } from '../records/decide.ts'
 import { useRecords } from '../records/recordsStore.ts'
@@ -32,7 +34,11 @@ export const MODE_INFO: Record<AiMode, { label: string; hint: string; placeholde
     hint: 'Map the code into services, data stores and connectors. Pick the repositories and say what to bring in; anything else stays out.',
     placeholder: 'Optional scope, e.g. only checkout and payments; from the API gateway just the public routes, not the admin tools',
   },
-  drift: { label: 'Drift check', hint: 'Compare the diagram with the code and propose corrections.', placeholder: 'Optional focus' },
+  drift: {
+    label: 'Sync with code',
+    hint: 'Bring the diagram in line with the code: add what is missing, retire what is gone, mark planned work that is now built, and tuck strays into their services. Planned work stays.',
+    placeholder: 'Optional focus, e.g. only the payment services',
+  },
   solutions: {
     label: 'Propose solutions',
     hint: 'Describe what you need; get 2 to 4 alternative designs side by side, with pros, cons and scores, then pick one.',
@@ -66,6 +72,7 @@ export const MODE_INFO: Record<AiMode, { label: string; hint: string; placeholde
   decision: { label: 'Decision record', hint: 'Write up a decision (started from a decision record).', placeholder: 'What should the record say?' },
   notes: { label: 'Notes', hint: 'Summaries, items and agendas (started from a note).', placeholder: 'What should it do with the note?' },
   publish: { label: 'Publish to Notion', hint: 'Write the architecture, roadmap and decisions to your Notion page (set it up in Project settings → Notion).', placeholder: 'Anything to add to the changelog?' },
+  track: { label: 'Track work', hint: 'Create issues in your tracker for planned work and link them (started from the Changes table, the inspector or a decision).', placeholder: 'Anything to add to the issues?' },
   scan: {
     label: 'Scan for patterns',
     hint: 'Read the code for the conventions it follows; suggests checkable rules and guidelines (nothing changes until you add them).',
@@ -104,6 +111,11 @@ export function AiPanel(): React.JSX.Element {
   useEffect(() => {
     if (providers === null) void loadProviders()
   }, [providers])
+  const anyAlways = useStore((s) => Object.values(s.prefs.ai.tools).some((v) => Object.values(v).includes('always')))
+  const userTools = useStore((s) => s.ai.userTools)
+  useEffect(() => {
+    if (anyAlways && userTools === null) void loadUserTools()
+  }, [anyAlways, userTools])
 
   const scope = useMemo(() => {
     const names = (ids: string[]): string => ids.map((id) => nodes?.[id]?.name ?? id).slice(0, 3).join(', ') + (ids.length > 3 ? ` +${ids.length - 3}` : '')
@@ -113,11 +125,10 @@ export function AiPanel(): React.JSX.Element {
     return 'whole system'
   }, [selection, focusId, nodes])
 
-  const send = (): void => {
-    const t = text.trim()
+  const start = (): void => {
     // Blocked only when the provider is known to be unusable (the list may still be loading).
-    if ((t === '' && run !== undefined) || busy || provider?.ok === false) return
-    void ask(t)
+    if (provider?.ok === false) return
+    void ask(text.trim(), { scope: 'canvas' })
     setText('')
   }
 
@@ -128,22 +139,31 @@ export function AiPanel(): React.JSX.Element {
   return (
     <aside className="flex w-[400px] shrink-0 flex-col border-l bg-panel" aria-label="AI assistant">
       <div className="flex h-11 shrink-0 items-center gap-1.5 border-b px-3">
-        <Bot className="size-4 text-hx-violet" />
-        <span className="text-sm font-semibold">AI</span>
-        <div className="ml-auto flex items-center">
+        <Bot className="size-4 shrink-0 text-hx-violet" />
+        {run === undefined ? (
+          <span className="text-sm font-semibold">AI</span>
+        ) : (
+          <div className="flex min-w-0 flex-1 items-center gap-1.5" title={`${run.title} · ${run.vendor === 'claude' ? 'Claude Code' : 'Codex'}${run.model !== null ? ` (${run.model})` : ''}`}>
+            <span className="min-w-0 truncate text-sm font-semibold">{run.title}</span>
+            <span className="shrink-0 rounded-full border px-1.5 text-[10px] text-muted-foreground">{MODE_INFO[run.mode].label}</span>
+          </div>
+        )}
+        <div className="ml-auto flex shrink-0 items-center">
           <Button variant="ghost" size="icon" className="size-7" aria-label="Conversations" title="Conversations" onClick={() => setShowHistory((x) => !x)}>
             <History />
           </Button>
-          <Button variant="ghost" size="icon" className="size-7" aria-label="New conversation" title="New conversation" onClick={newConversation}>
-            <Plus />
-          </Button>
+          {run !== undefined ? (
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" icon={<Plus />} title="Start a new chat (this one stays in Conversations)" onClick={newConversation}>
+              New chat
+            </Button>
+          ) : null}
           <Button variant="ghost" size="icon" className="size-7" aria-label="Close AI panel" onClick={() => setUi({ aiOpen: false })}>
             <X />
           </Button>
         </div>
       </div>
 
-      <div className="flex shrink-0 flex-wrap items-center gap-1 border-b px-3 py-1.5">
+      {run === undefined && <div className="flex shrink-0 flex-wrap items-center gap-1 border-b px-3 py-1.5">
         <select aria-label="Provider" title={AI_NOTE_SHORT} value={vendor} onChange={(e) => setVendor(e.target.value as 'claude' | 'codex')} className="h-7 rounded-md border bg-background px-1.5 text-xs">
           {(providers ?? [{ id: 'claude', name: 'Claude Code', ok: true }, { id: 'codex', name: 'Codex', ok: true }]).map((p) => (
             <option key={p.id} value={p.id}>
@@ -153,7 +173,7 @@ export function AiPanel(): React.JSX.Element {
           ))}
         </select>
         <ModelPicker provider={provider} value={{ model, effort }} onChange={(v) => setAi(v)} />
-      </div>
+      </div>}
 
       {provider !== undefined && !provider.ok && (
         <div className="flex items-start gap-2 border-b bg-warning/10 px-3 py-2 text-xs">
@@ -189,7 +209,7 @@ export function AiPanel(): React.JSX.Element {
               <button
                 type="button"
                 onClick={() => {
-                  setAi({ activeRunId: r.id, review: r.proposalId !== null ? { kind: 'proposal', id: r.proposalId } : null, excluded: {} })
+                  setAi({ activeRunId: r.id, mode: r.mode, review: r.proposalId !== null ? { kind: 'proposal', id: r.proposalId } : null, excluded: {} })
                   setShowHistory(false)
                 }}
                 className="flex min-w-0 flex-1 items-center gap-2 text-left"
@@ -225,60 +245,56 @@ export function AiPanel(): React.JSX.Element {
         )}
       </div>
 
-      <div className="shrink-0 border-t p-2">
-        <div className="mb-1.5 flex items-center gap-1 overflow-x-auto">
-          {CHIP_MODES.map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => {
-                // With a conversation open, another mode means a new conversation (the open one stays in history).
-                if (run !== undefined && run.mode !== m) newConversation()
-                setAiMode(m)
-              }}
-              title={run !== undefined && run.mode !== m ? `New conversation: ${MODE_INFO[m].hint}` : MODE_INFO[m].hint}
-              className={cn('shrink-0 rounded-full border px-2 py-0.5 text-[11px]', mode === m ? 'border-primary bg-primary/15 text-foreground' : 'text-muted-foreground hover:text-foreground')}
-            >
-              {MODE_INFO[m].label}
-            </button>
-          ))}
-        </div>
-        {mode === 'import' && repos.length > 1 && <ImportRepos repos={repos} />}
-        <div className="rounded-lg border bg-background focus-within:border-ring">
-          <textarea
-            aria-label="Message to the AI"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                e.preventDefault()
-                send()
-              }
-            }}
-            rows={3}
-            placeholder={run !== undefined ? (busy ? 'Wait for the answer, or stop it…' : 'Reply to this conversation… (Ctrl+Enter)') : MODE_INFO[mode].placeholder}
-            className="block w-full resize-none bg-transparent px-2.5 py-2 text-xs outline-none"
-          />
-          <div className="flex items-center gap-2 px-2 pb-1.5">
-            <ToolsPicker disabled={mode === 'publish'} />
-            <span className="min-w-0 flex-1 truncate text-[10.5px] text-muted-foreground" title="Scope: the selection or focused node is sent as context">
-              Scope: {scope}
-            </span>
-            {busy && run !== undefined ? (
-              <Button size="sm" variant="outline" icon={<Square />} onClick={() => void cancelRun(run.id)}>
-                Stop
-              </Button>
-            ) : (
-              <Button size="sm" icon={<Send />} disabled={provider?.ok === false || (run !== undefined && text.trim() === '')} onClick={send}>
-                {run !== undefined ? 'Reply' : MODE_INFO[mode].label}
-              </Button>
-            )}
+      {run === undefined ? (
+        <div className="shrink-0 border-t p-2">
+          <div className="mb-1.5 flex flex-wrap items-center gap-1">
+            {CHIP_MODES.map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setAiMode(m)}
+                title={MODE_INFO[m].hint}
+                aria-pressed={mode === m}
+                className={cn('shrink-0 rounded-full border px-2 py-0.5 text-[11px]', mode === m ? 'border-primary bg-primary/15 text-foreground' : 'text-muted-foreground hover:text-foreground')}
+              >
+                {MODE_INFO[m].label}
+              </button>
+            ))}
           </div>
+          {mode === 'import' && repos.length > 1 && <ImportRepos repos={repos} />}
+          <div className="rounded-lg border bg-background focus-within:border-ring">
+            <textarea
+              aria-label="Message to the AI"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault()
+                  start()
+                }
+              }}
+              rows={3}
+              placeholder={MODE_INFO[mode].placeholder}
+              className="block w-full resize-none bg-transparent px-2.5 py-2 text-xs outline-none"
+            />
+            <ToolHint text={text} />
+            <div className="flex items-center gap-2 px-2 pb-1.5">
+              <ToolsPicker disabled={mode === 'publish'} />
+              <span className="min-w-0 flex-1 truncate text-[10.5px] text-muted-foreground" title="Scope: the selection or focused node is sent as context">
+                Scope: {scope}
+              </span>
+              <Button size="sm" icon={<Send />} disabled={provider?.ok === false} onClick={start}>
+                {MODE_INFO[mode].label}
+              </Button>
+            </div>
+          </div>
+          <p className="mt-1.5 text-center text-[10.5px] text-muted-foreground">
+            Runs your own {provider?.name ?? (vendor === 'codex' ? 'Codex' : 'Claude Code')} on this computer; usage counts against your plan.
+          </p>
         </div>
-        <p className="mt-1.5 text-center text-[10.5px] text-muted-foreground">
-          Runs your own {provider?.name ?? (vendor === 'codex' ? 'Codex' : 'Claude Code')} on this computer; usage counts against your plan.
-        </p>
-      </div>
+      ) : (
+        <ReplyBox run={run} busy={busy} />
+      )}
     </aside>
   )
 }
@@ -319,12 +335,21 @@ function Conversation({ run }: { run: AiRunView }): React.JSX.Element {
   }, [run.turns.length, lastText, run.activity.length, proposal?.id])
   const tools = run.activity
   const failed = tools.filter((t) => t.status === 'failed').length
+  // Retry sends the last thing the user typed (the opening request of a button-started run has nothing to retype).
+  const lastAsk = run.turns.length > 1 ? run.turns.filter((t) => t.role === 'user').at(-1)?.text : undefined
 
   return (
     <div className="flex flex-col gap-3 p-3">
       {run.turns.map((t, i) => (
         <div key={i} className={cn(t.role === 'user' ? 'ml-8 self-end rounded-xl rounded-br-sm bg-primary/15 px-3 py-2 text-xs' : '')}>
-          {t.role === 'user' ? <span className="whitespace-pre-wrap selectable">{t.text || MODE_INFO[run.mode].label}</span> : <Markdown text={t.text} />}
+          {t.role === 'user' ? (
+            <>
+              <span className="whitespace-pre-wrap selectable">{t.text || MODE_INFO[run.mode].label}</span>
+              {t.sent !== undefined && t.sent !== t.text && <SentContext sent={t.sent} />}
+            </>
+          ) : (
+            <Markdown text={t.text} />
+          )}
         </div>
       ))}
 
@@ -377,7 +402,14 @@ function Conversation({ run }: { run: AiRunView }): React.JSX.Element {
       {run.waiting !== null && run.status === 'running' && <WaitingNotice run={run} waiting={run.waiting} />}
       {run.quietSince !== null && run.waiting === null && (run.status === 'running' || run.status === 'starting') && <QuietNotice run={run} />}
       {run.error !== null && (
-        <div className="rounded-md border border-destructive/50 bg-destructive/10 px-2.5 py-1.5 text-xs selectable">{run.error}</div>
+        <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-2.5 py-1.5 text-xs">
+          <span className="flex-1 selectable">{run.error}</span>
+          {!busy && lastAsk !== undefined && (
+            <Button size="sm" variant="outline" icon={<RefreshCw />} onClick={() => void reply(run.id, lastAsk)} title="Send your last message again">
+              Retry
+            </Button>
+          )}
+        </div>
       )}
       {proposal !== undefined && <ProposalCard proposal={proposal} />}
       {run.mode === 'solutions' && run.options.length > 0 && <SolutionsCard run={run} />}
@@ -694,6 +726,108 @@ function WaitingNotice({ run, waiting }: { run: AiRunView; waiting: string[] }):
       <Button size="sm" variant="outline" icon={<Square />} onClick={() => void cancelRun(run.id)}>
         Stop
       </Button>
+    </div>
+  )
+}
+
+/** What a message really sent (scope, problems, note reference, plan…), folded away. */
+function SentContext({ sent }: { sent: string }): React.JSX.Element {
+  return (
+    <details className="mt-1 text-[10.5px] text-muted-foreground">
+      <summary className="cursor-pointer select-none">Context sent</summary>
+      <pre className="mt-1 max-h-48 overflow-auto font-sans whitespace-pre-wrap selectable">{sent.length > 6000 ? `${sent.slice(0, 6000)}…` : sent}</pre>
+    </details>
+  )
+}
+
+const selKey = (s: AiSelection): string => [...s.nodeIds, '|', ...s.connectorIds, '|', s.focusId ?? ''].join(',')
+
+/**
+ * Talking in a conversation: a reply box only (starting something else is "New chat"). What the user selected on the
+ * canvas since the last message can go along (a pill they can drop); a reply typed while it works waits its turn.
+ */
+function ReplyBox({ run, busy }: { run: AiRunView; busy: boolean }): React.JSX.Element {
+  const [text, setText] = useState('')
+  const [queued, setQueued] = useState<string | null>(null)
+  const [dropped, setDropped] = useState(false)
+  const selection = useStore((s) => s.ui.selection)
+  const focusId = useStore((s) => s.ui.focusId)
+  const nodes = useStore((s) => s.project?.model.nodes)
+  const sentSel = useRef<Record<string, string>>({})
+  const sel = useMemo(() => canvasSelection(), [selection, focusId]) // eslint-disable-line react-hooks/exhaustive-deps
+  const key = selKey(sel)
+  const hasSel = sel.nodeIds.length > 0 || sel.connectorIds.length > 0
+  const include = hasSel && !dropped && sentSel.current[run.id] !== key
+  useEffect(() => setDropped(false), [key])
+  const label = sel.nodeIds.length > 0 ? sel.nodeIds.map((id) => nodes?.[id]?.name ?? id).slice(0, 2).join(', ') + (sel.nodeIds.length > 2 ? ` +${sel.nodeIds.length - 2}` : '') : `${sel.connectorIds.length} connector${sel.connectorIds.length === 1 ? '' : 's'}`
+
+  const sendNow = (t: string): void => {
+    if (include) sentSel.current[run.id] = key
+    void reply(run.id, t, include ? { selection: sel } : {})
+  }
+  // A reply queued while the CLI worked goes as soon as it is done.
+  useEffect(() => {
+    if (busy || queued === null) return
+    sendNow(queued)
+    setQueued(null)
+  }, [busy, queued]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const submit = (): void => {
+    const t = text.trim()
+    if (t === '') return
+    if (busy) setQueued(t)
+    else sendNow(t)
+    setText('')
+  }
+
+  return (
+    <div className="shrink-0 border-t p-2">
+      {queued !== null && (
+        <div className="mb-1.5 flex items-center gap-2 rounded-md border bg-background/60 px-2 py-1 text-[11px] text-muted-foreground">
+          <span className="min-w-0 flex-1 truncate">Will send when it finishes: {queued}</span>
+          <button type="button" className="hover:text-foreground" onClick={() => setQueued(null)}>
+            Cancel
+          </button>
+        </div>
+      )}
+      <div className="rounded-lg border bg-background focus-within:border-ring">
+        <textarea
+          aria-label="Reply to this conversation"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+              e.preventDefault()
+              submit()
+            } else if (e.key === 'Escape' && text === '') newConversation()
+          }}
+          rows={2}
+          placeholder={busy ? 'Reply now; it is sent when this answer finishes…' : 'Reply… (Ctrl+Enter to send, Esc for a new chat)'}
+          className="block w-full resize-none bg-transparent px-2.5 py-2 text-xs outline-none"
+        />
+        <ToolHint text={text} />
+        <div className="flex items-center gap-2 px-2 pb-1.5">
+          <ToolsPicker disabled={run.mode === 'publish'} />
+          {include ? (
+            <span className="flex min-w-0 flex-1 items-center gap-1 text-[10.5px]" title="What you selected on the canvas goes with this message">
+              <span className="min-w-0 truncate rounded-full border border-primary/40 bg-primary/10 px-1.5">Include: {label}</span>
+              <button type="button" aria-label="Don't include the selection" className="text-muted-foreground hover:text-foreground" onClick={() => setDropped(true)}>
+                <X className="size-3" />
+              </button>
+            </span>
+          ) : (
+            <span className="flex-1" />
+          )}
+          {busy && (
+            <Button size="sm" variant="outline" icon={<Square />} onClick={() => void cancelRun(run.id)}>
+              Stop
+            </Button>
+          )}
+          <Button size="sm" icon={<Send />} disabled={text.trim() === ''} onClick={submit}>
+            {busy ? 'Queue' : 'Reply'}
+          </Button>
+        </div>
+      </div>
     </div>
   )
 }

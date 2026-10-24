@@ -30,7 +30,7 @@ import type { Model } from '../../shared/model/schema.ts'
 import { MCP_SERVER_NAME, MCP_TOKEN_ENV } from './mcp-host.ts'
 import type { McpHost, McpRoute } from './mcp-host.ts'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { BUILD_BRIEF, IMPLEMENT_BRIEF, SYSTEM_BRIEF, buildPrompt, defaultRequest, firstPrompt } from './prompts.ts'
+import { BUILD_BRIEF, IMPLEMENT_BRIEF, SYSTEM_BRIEF, buildPrompt, defaultRequest, firstPrompt, scopeLine } from './prompts.ts'
 import { prepareGit, removeWorktree, slugify, uncommitted } from './git-prep.ts'
 import { savePlanFile } from './plans.ts'
 import type { AllowRule } from '../../shared/events.ts'
@@ -101,6 +101,8 @@ interface RunState {
   allowRules?: AllowRule[]
   /** Implementing: approval requests decline themselves when nobody answers. */
   askTimers?: Map<string, ReturnType<typeof setTimeout>>
+  /** The tools the CLI was last told about (the note goes again only when they change). */
+  toolsNoted?: string
 }
 
 const ASK_TIMEOUT_MS = 30_000
@@ -399,6 +401,8 @@ export class AiRunner {
       if (planContext === '' && req.selection.nodeIds.length === 0 && req.prompt.trim() === '') throw new HarpoonError('VALIDATION', 'Pick what to plan: a decision, an accepted proposal, or select the planned parts first.')
     }
     const prompt = firstPrompt({ mode: req.mode, prompt: req.prompt, selection: req.selection, model: session.model }) + planContext + repoBrief(session.root, repos)
+    const opening = state.view.turns[0]
+    if (opening !== undefined) opening.sent = prompt
     if (req.mode === 'implement') {
       // A reply to a plan run that ended without a plan runs plan mode again, with this context.
       state.planPrompt = prompt
@@ -648,7 +652,7 @@ export class AiRunner {
     this.#emit(s, true)
   }
 
-  async send(runId: string, prompt: string, tools?: string[]): Promise<AiRunView> {
+  async send(runId: string, prompt: string, tools?: string[], selection?: AiSelection): Promise<AiRunView> {
     const s = this.#runs.get(runId)
     if (s === undefined) throw new HarpoonError('NOT_FOUND', 'That conversation is gone.')
     if (s.view.status === 'running' || s.view.status === 'starting') throw new HarpoonError('CONFLICT', 'Wait for the current answer first.')
@@ -684,7 +688,10 @@ The user follows up: `
 
 The user adds: `
     }
-    s.view.turns.push({ role: 'user', text: prompt.trim() })
+    // What the user selected since: this message's context (the conversation already knows the earlier one).
+    const scope = selection === undefined ? '' : scopeLine(selection, this.#o.projects.require().model)
+    const message = carry + prompt.trim() + (scope !== '' ? `\n\n(${scope})` : '')
+    s.view.turns.push({ role: 'user', text: prompt.trim(), ...(message !== prompt.trim() ? { sent: message } : {}) })
     s.view.questions = null
     s.view.status = 'starting'
     s.view.error = null
@@ -696,7 +703,7 @@ The user adds: `
 
 (Options so far: ${s.options.map((o) => `${o.key} "${o.title}"`).join(', ')}. Use select_option before editing one, then submit_solutions again.)`
         : ''
-    void this.#job(s, carry + prompt.trim() + reminder, s.sessionId !== undefined)
+    void this.#job(s, message + reminder, s.sessionId !== undefined)
     return s.view
   }
 
@@ -788,6 +795,11 @@ The user adds: `
       draft: s.draft,
       mode: v.mode,
       ...(s.context.noteTask !== undefined ? { noteTask: s.context.noteTask } : {}),
+      readNote: async (path) => {
+        const n = await readNote(this.#o.projects.require().root, path)
+        return { path: n.path, title: n.meta.title, date: n.meta.date, body: n.body }
+      },
+      readRecord: async (kind, id) => (await listCollection(this.#o.projects.require().root, kind === 'decision' ? 'decisions' : 'solutions')).find((x) => x.id === id),
       options: () => ({ keys: s.options.map((o) => ({ key: o.key, title: o.title })), active: s.options[s.active]?.key ?? null }),
       onBeginOption: (title, approach) => {
         const key = String.fromCharCode(65 + s.options.length)
@@ -1004,7 +1016,7 @@ The user adds: `
       step: build !== null ? 'implement' : native ? 'plan' : 'design',
       cwd,
       readDirs: readable.filter((p) => resolve(p) !== resolve(cwd)),
-      prompt: native || build !== null ? o.prompt : o.prompt + toolsNote(v.mode, v.tools),
+      prompt: native || build !== null ? o.prompt : o.prompt + this.#toolsNoteOnce(s, o.resume),
       ...(o.resume ? {} : { systemAppend: build !== null ? BUILD_BRIEF : native ? IMPLEMENT_BRIEF : SYSTEM_BRIEF }),
       model: v.model,
       effort: v.effort,
@@ -1112,6 +1124,14 @@ The user adds: `
       }
       this.#emit(s, false)
     } else if (fatal !== null) v.error = fatal
+  }
+
+  /** The tools note on a pass's first message, and again only when the conversation's tools change. */
+  #toolsNoteOnce(s: RunState, resume: boolean): string {
+    const key = s.view.tools.join(',')
+    if (resume && s.toolsNoted === key) return ''
+    s.toolsNoted = key
+    return toolsNote(s.view.mode, s.view.tools)
   }
 
   /** Log an activity row; returns its id so a long step can update it in place. */
@@ -1455,5 +1475,5 @@ The user adds: `
 }
 
 function defaultTitle(mode: AiStartRequest['mode']): string {
-  return mode === 'import' ? 'Import repository' : mode === 'document' ? 'Document' : mode === 'drift' ? 'Drift check' : mode === 'explain' ? 'Question' : 'Plan'
+  return mode === 'import' ? 'Import repository' : mode === 'document' ? 'Document' : mode === 'drift' ? 'Sync with code' : mode === 'explain' ? 'Question' : 'Plan'
 }

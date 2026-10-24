@@ -1,6 +1,7 @@
 // AI actions: providers, conversations, proposals and the Diff & Merge review.
-import type { AiContext, AiImplementRequest, AiMode, AiVendor, ResultCode } from '@shared/ipc.ts'
+import type { AiContext, AiImplementRequest, AiMode, AiSelection, AiVendor, ResultCode } from '@shared/ipc.ts'
 import { invoke } from '../ipc/client.ts'
+import { alwaysOn } from '../ai/toolHints.ts'
 import { pickFor, toast } from './actions.ts'
 import { getState, setAi, setUi } from './store.ts'
 
@@ -32,7 +33,8 @@ export function setAiMode(mode: AiMode): void {
   setAi({ mode })
 }
 
-function selection(): { nodeIds: string[]; connectorIds: string[]; focusId: string | null } {
+/** The canvas selection (and the node the canvas is inside), as AI context. */
+export function canvasSelection(): AiSelection {
   const ui = getState().ui
   return {
     nodeIds: ui.selection?.kind === 'node' ? ui.selection.ids : [],
@@ -41,24 +43,46 @@ function selection(): { nodeIds: string[]; connectorIds: string[]; focusId: stri
   }
 }
 
-/** Start a new conversation, or continue the active one when it is idle. */
-export async function ask(prompt: string, o: { fresh?: boolean; mode?: AiMode; context?: AiContext } = {}): Promise<void> {
+/**
+ * What a new conversation gets as context: the canvas selection (the panel's composer, canvas actions), none (runs
+ * started from notes, records, settings or lists, which name what they are about), or the ids given.
+ */
+export type AskScope = 'canvas' | 'none' | AiSelection
+
+const NO_SELECTION: AiSelection = { nodeIds: [], connectorIds: [], focusId: null }
+
+/** Start a new conversation (the open one stays in history). */
+export async function ask(prompt: string, o: { mode?: AiMode; context?: AiContext; scope?: AskScope } = {}): Promise<void> {
   const ai = getState().ai
-  const active = ai.activeRunId !== null ? ai.runs[ai.activeRunId] : undefined
-  if (o.fresh !== true && active !== undefined && (active.status === 'done' || active.status === 'failed' || active.status === 'cancelled') && o.mode === undefined) {
-    const r = await invoke('ai.send', { runId: active.id, prompt, tools: ai.tools })
-    if (!r.ok) toast(r.error.message, 'error')
-    return
-  }
   const mode = o.mode ?? ai.mode
   // The panel shows the conversation's own mode (runs started from a button too), so its box replies to it.
   if (mode !== ai.mode) setAi({ mode })
   // Import: the repositories picked in the panel (none picked means all of them).
   const repoIds = mode === 'import' && ai.importRepos !== null && ai.importRepos.length > 0 ? ai.importRepos : undefined
   const context: AiContext | undefined = repoIds !== undefined ? { ...o.context, repoIds } : o.context
-  const r = await invoke('ai.start', { vendor: ai.vendor, model: ai.model, effort: ai.effort, tools: ai.tools, mode, prompt, selection: selection(), ...(context !== undefined ? { context } : {}) })
+  const tools = [...new Set([...ai.tools, ...alwaysOn(ai.userTools?.[ai.vendor], getState().prefs.ai.tools[ai.vendor])])]
+  const scope = o.scope ?? 'none'
+  const sel = scope === 'canvas' ? canvasSelection() : scope === 'none' ? NO_SELECTION : scope
+  const r = await invoke('ai.start', { vendor: ai.vendor, model: ai.model, effort: ai.effort, tools: mode === 'publish' ? [] : tools, mode, prompt, selection: sel, ...(context !== undefined ? { context } : {}) })
   if (!r.ok) return toast(r.error.message, 'error')
   setAi((s) => ({ activeRunId: r.value.id, runs: { ...s.runs, [r.value.id]: r.value }, review: { kind: 'draft', runId: r.value.id }, excluded: {} }))
+  setUi({ aiOpen: true })
+}
+
+/** Continue a conversation; `selection`: what the user selected since, sent as this message's context. */
+export async function reply(runId: string, prompt: string, o: { selection?: AiSelection } = {}): Promise<boolean> {
+  const ai = getState().ai
+  const vendor = ai.runs[runId]?.vendor ?? ai.vendor
+  const tools = [...new Set([...ai.tools, ...alwaysOn(ai.userTools?.[vendor], getState().prefs.ai.tools[vendor])])]
+  const r = await invoke('ai.send', { runId, prompt, tools, ...(o.selection !== undefined ? { selection: o.selection } : {}) })
+  if (!r.ok) toast(r.error.message, 'error')
+  return r.ok
+}
+
+/** Open the panel ready to start a conversation in this mode (the open one stays in history). */
+export function startIn(mode: AiMode): void {
+  newConversation()
+  setAi({ mode })
   setUi({ aiOpen: true })
 }
 

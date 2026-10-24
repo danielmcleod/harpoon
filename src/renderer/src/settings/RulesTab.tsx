@@ -96,7 +96,7 @@ export function RulesTab({ readOnly }: { readOnly: boolean }): React.JSX.Element
                 onClick={() => {
                   setUi({ settings: null, aiOpen: true })
                   setAiMode('scan')
-                  void ask('', { fresh: true, mode: 'scan' })
+                  void ask('', { mode: 'scan' })
                 }}
               >
                 Scan code for patterns

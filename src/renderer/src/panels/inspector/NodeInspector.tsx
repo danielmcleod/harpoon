@@ -24,6 +24,7 @@ import { deleteSelection } from '../selectionOps.ts'
 import { EvidenceList } from './EvidenceList.tsx'
 import { Chip, NumberInput, Row, Section, Select, TextArea, TextInput, orNull } from './fields.tsx'
 import { DataClassPicker, NotesEditor, PhasePicker, TeamPicker, useDataScope } from './governance.tsx'
+import { IssuesRow } from './IssuesRow.tsx'
 import { ResilienceSection } from './ResilienceSection.tsx'
 import { NodeProblems } from '../Problems.tsx'
 
@@ -150,6 +151,7 @@ export function NodeInspector({ node: n, readOnly }: { node: HxNode; readOnly: b
         <Row label="Phase" hint="The roadmap phase in which this lands (planned) or goes away (deprecated/removed)">
           <PhasePicker value={n.phase} readOnly={readOnly} onChange={(phase) => edit([{ op: 'updateNode', id: n.id, patch: { phase } }], { label: 'set phase' })} />
         </Row>
+        <IssuesRow target={{ kind: 'node', id: n.id }} status={n.status} issues={n.issues} readOnly={readOnly} onChange={(issues) => edit([{ op: 'updateNode', id: n.id, patch: { issues } }], { label: 'issue links' })} />
       </Section>
 
       <Section title="Notes" defaultOpen={n.notes !== ''}>

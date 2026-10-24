@@ -9,6 +9,9 @@ import type { Model } from '@shared/model/schema.ts'
 import { ask } from '../state/ai.ts'
 import { getState } from '../state/store.ts'
 
+/** Problems named in the request; past this the AI looks the rest up (list_problems). */
+const RESOLVE_LINES_MAX = 25
+
 /** A problem as a line for the AI, with the ids it is about. */
 function line(p: Problem): string {
   const at = [p.nodeId !== undefined ? `node ${p.nodeId}` : '', p.connectorId !== undefined ? `connector ${p.connectorId}` : '', p.boundaryId !== undefined ? `boundary ${p.boundaryId}` : '', p.flowId !== undefined ? `flow ${p.flowId}` : '']
@@ -37,7 +40,9 @@ export function resolveWithAi(problems: readonly Problem[], findings: readonly R
   if (getState().project === null) return
   const lines = [...problems.map(line), ...findings.map(findingLine)]
   const head = scope !== null ? `Resolve the problems with ${scope}:` : lines.length === 1 ? 'Resolve this problem:' : `Resolve these ${lines.length} problems:`
-  void ask(`${head}\n${lines.join('\n')}`, { fresh: true, mode: 'resolve' })
+  const shown = lines.slice(0, RESOLVE_LINES_MAX)
+  const more = lines.length > shown.length ? `\n…and ${lines.length - shown.length} more: call list_problems for them all.` : ''
+  void ask(`${head}\n${shown.join('\n')}${more}`, { mode: 'resolve' })
 }
 
 /** Everything Harpoon reports (problems and availability gaps), in one run. */

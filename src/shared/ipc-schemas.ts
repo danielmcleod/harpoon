@@ -4,7 +4,7 @@
 import { NOTE_ACTIONS, NOTE_ITEM_KINDS } from './ipc.ts'
 import { EFFORTS } from './ipc.ts'
 import { z } from 'zod'
-import { AI_MODES, AI_VENDORS, GIT_POLICIES, NODE_STYLES, THEMES } from './ipc.ts'
+import { AI_MODES, AI_VENDORS, GIT_POLICIES, NODE_STYLES, THEMES, TOOL_USES } from './ipc.ts'
 import { APPROVALS } from './run.ts'
 import { OpZ } from './model/ops.ts'
 import type { Cmd, CollectionItem, ExportFormat, Req, Result } from './ipc.ts'
@@ -15,7 +15,15 @@ import type { Op } from './model/ops.ts'
 
 const KB = 1024
 
+
 export const ID_MAX = 128
+
+/** What the user has selected or is looking inside (sent with AI requests as context). */
+const SelectionZ = z.strictObject({
+  nodeIds: z.array(z.string().max(ID_MAX)).max(2000),
+  connectorIds: z.array(z.string().max(ID_MAX)).max(2000),
+  focusId: z.string().max(ID_MAX).nullable(),
+})
 export const PATH_MAX = 4096
 export const LOG_MSG_MAX = 16 * KB
 export const PROMPT_MAX = 100 * KB
@@ -72,6 +80,7 @@ export const REQUEST_SCHEMAS = {
         vendor: z.enum(AI_VENDORS).nullable(),
         claude: z.strictObject({ model: ModelIdZ.nullable(), effort: EffortZ.nullable() }),
         codex: z.strictObject({ model: ModelIdZ.nullable(), effort: EffortZ.nullable() }),
+        tools: z.strictObject({ claude: z.record(z.string().max(200), z.enum(TOOL_USES)), codex: z.record(z.string().max(200), z.enum(TOOL_USES)) }),
       }),
     ),
     implement: optional(
@@ -123,11 +132,7 @@ export const REQUEST_SCHEMAS = {
     tools: optional(z.array(ToolNameZ).max(20)),
     mode: z.enum(AI_MODES),
     prompt: z.string().max(PROMPT_MAX),
-    selection: z.strictObject({
-      nodeIds: z.array(z.string().max(ID_MAX)).max(2000),
-      connectorIds: z.array(z.string().max(ID_MAX)).max(2000),
-      focusId: z.string().max(ID_MAX).nullable(),
-    }),
+    selection: SelectionZ,
     context: optional(
       z.strictObject({
         solutionSetId: optional(z.string().max(ID_MAX)),
@@ -140,7 +145,7 @@ export const REQUEST_SCHEMAS = {
       }),
     ),
   }),
-  'ai.send': z.strictObject({ runId: z.string().max(ID_MAX), prompt: z.string().min(1).max(PROMPT_MAX), tools: optional(z.array(ToolNameZ).max(20)) }),
+  'ai.send': z.strictObject({ runId: z.string().max(ID_MAX), prompt: z.string().min(1).max(PROMPT_MAX), tools: optional(z.array(ToolNameZ).max(20)), selection: optional(SelectionZ) }),
   'ai.tools': z.strictObject({ force: optional(z.boolean()) }),
   'ai.delete': z.strictObject({ runId: z.string().max(ID_MAX) }),
   'ai.clear': VoidZ,

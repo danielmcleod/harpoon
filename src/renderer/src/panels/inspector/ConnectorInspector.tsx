@@ -17,6 +17,7 @@ import { EvidenceList } from './EvidenceList.tsx'
 import { NumberInput, Row, Section, Select, TextArea, TextInput, Toggle, orNull } from './fields.tsx'
 import { STATUS_LABEL } from './NodeInspector.tsx'
 import { DataClassPicker, NotesEditor, PhasePicker, TeamPicker } from './governance.tsx'
+import { IssuesRow } from './IssuesRow.tsx'
 
 function patchConn(id: string, patch: ConnectorPatch, field: string): void {
   edit([{ op: 'updateConnector', id, patch }], { coalesceKey: `conn:${id}:${field}`, label: 'edit connector' })
@@ -160,6 +161,7 @@ function SingleConnector({ c, readOnly }: { c: HxConnector; readOnly: boolean })
         <Row label="Phase">
           <PhasePicker value={c.phase} readOnly={readOnly} onChange={(phase) => edit([{ op: 'updateConnector', id: c.id, patch: { phase } }], { label: 'set phase' })} />
         </Row>
+        <IssuesRow target={{ kind: 'connector', id: c.id }} status={c.status} issues={c.issues} readOnly={readOnly} onChange={(issues) => edit([{ op: 'updateConnector', id: c.id, patch: { issues } }], { label: 'issue links' })} />
       </Section>
 
       <Section title="Notes" defaultOpen={c.notes !== ''}>

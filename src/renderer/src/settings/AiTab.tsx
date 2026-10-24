@@ -2,14 +2,15 @@
 // each one starts with, and access for outside agents to Harpoon's MCP tools.
 import { CheckCircle2, CircleAlert, Copy, Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import type { AiDefaults, AiVendor, CodexPluginResult, ExternalMcpView, GitPolicy, ImplementSettings, ProviderView } from '@shared/ipc.ts'
+import type { AiDefaults, AiVendor, CodexPluginResult, ExternalMcpView, GitPolicy, ImplementSettings, ProviderView, ToolUse } from '@shared/ipc.ts'
 import type { Approvals } from '@shared/run.ts'
 import { APPROVAL_INFO, GIT_INFO } from '../ai/ImplementDialog.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { Switch } from '../components/ui/Switch.tsx'
 import { invoke } from '../ipc/client.ts'
 import { toast } from '../state/actions.ts'
-import { loadProviders } from '../state/ai.ts'
+import { loadProviders, loadUserTools } from '../state/ai.ts'
+import { cn } from '../lib/cn.ts'
 import { getState, setAi, setState, useStore } from '../state/store.ts'
 import { AiNote } from '../ai/AiNote.tsx'
 import { ModelPicker } from '../ai/ModelPicker.tsx'
@@ -77,10 +78,79 @@ export function AiTab(): React.JSX.Element {
         {providers === null && <p className="text-muted-foreground">Checking your CLIs…</p>}
       </section>
 
+      <ToolsSettings />
+
       <Implementing />
 
       <OutsideAgents />
     </div>
+  )
+}
+
+/** The user's own tools per CLI: off, suggested when a message points at them, or on for every conversation. */
+function ToolsSettings(): React.JSX.Element {
+  const defaults = useStore((s) => s.prefs.ai)
+  const all = useStore((s) => s.ai.userTools)
+  const [checking, setChecking] = useState(false)
+  useEffect(() => {
+    if (all === null) {
+      setChecking(true)
+      void loadUserTools().finally(() => setChecking(false))
+    }
+  }, [all])
+  const set = async (vendor: AiVendor, name: string, use: ToolUse): Promise<void> => {
+    const next = { ...defaults, tools: { ...defaults.tools, [vendor]: { ...defaults.tools[vendor], [name]: use } } }
+    const r = await invoke('state.set', { ai: next })
+    if (!r.ok) return toast(r.error.message, 'error')
+    setState({ prefs: r.value })
+  }
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <h3 className="flex-1 text-sm font-semibold">Tools</h3>
+        <Button
+          size="sm"
+          variant="outline"
+          icon={<RefreshCw className={checking ? 'animate-spin' : undefined} />}
+          disabled={checking}
+          onClick={() => {
+            setChecking(true)
+            void loadUserTools(true).finally(() => setChecking(false))
+          }}
+        >
+          Check again
+        </Button>
+      </div>
+      <p className="text-muted-foreground">
+        Your CLIs’ own MCP servers and connectors (Linear, GitHub, Jira, Notion…). The AI acts in them under your account. <b>Suggest</b> offers one with a click when
+        your message mentions it; <b>Always on</b> gives it to every conversation; <b>Off</b> never offers it. Publishing, planning in plan mode and implementing never use them.
+      </p>
+      {(['claude', 'codex'] as const).map((vendor) => {
+        const list = all?.[vendor] ?? []
+        return (
+          <div key={vendor} className="rounded-lg border p-2">
+            <div className="mb-1 font-medium">{vendor === 'claude' ? 'Claude Code' : 'Codex'}</div>
+            {all !== null && list.length === 0 && <p className="text-muted-foreground">None set up in this CLI.</p>}
+            {all === null && <p className="text-muted-foreground">Asking your CLI…</p>}
+            <ul className="flex flex-col gap-1">
+              {list.map((t) => (
+                <li key={t.name} className="flex items-center gap-2">
+                  <span className={cn('min-w-0 flex-1 truncate', !t.ok && 'text-muted-foreground')}>
+                    {t.label}
+                    {t.ok ? '' : ' (not connected)'}
+                  </span>
+                  <select value={defaults.tools[vendor][t.name] ?? 'suggest'} onChange={(e) => void set(vendor, t.name, e.target.value as ToolUse)} className="h-7 rounded-md border bg-background px-1.5" aria-label={`Use of ${t.label}`}>
+                    <option value="off">Off</option>
+                    <option value="suggest">Suggest</option>
+                    <option value="always">Always on</option>
+                  </select>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
+      })}
+    </section>
   )
 }
 

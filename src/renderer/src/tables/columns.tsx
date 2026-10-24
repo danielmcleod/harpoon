@@ -385,6 +385,7 @@ export function changeColumns(c: ColumnCtx): ColumnDef<ChangeRow, unknown>[] {
     { id: 'name', accessorKey: 'name', header: 'What', meta: { width: 320 } },
     { id: 'what', accessorKey: 'what', header: 'Kind', meta: { width: 140 } },
     { id: 'status', accessorKey: 'status', header: 'Status', cell: ({ row }) => <span><StatusDot status={row.original.status} />{STATUS_LABEL[row.original.status]}</span>, meta: { width: 110 } },
+    { id: 'issues', accessorKey: 'issues', header: 'Tracked', cell: ({ row }) => <span className={row.original.tracked ? '' : 'text-muted-foreground'}>{row.original.issues}</span>, meta: { width: 130 } },
     showColumn<ChangeRow>((r) => (r.entity === 'connector' ? c.showOnCanvas('connector', r.entityId) : c.showOnCanvas('node', r.nodeId ?? r.entityId))),
   ]
 }

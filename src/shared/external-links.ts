@@ -18,6 +18,11 @@ export const EXTERNAL_HOSTS: readonly string[] = [
   // Muse's docs (https://dev.meta.ai/docs/muse-code, with dev.meta.ai allowed for open_docs); without it, Muse's docs
   // link was dropped, because only heal/commands.ts DOCS_HOSTS had it.
   'dev.meta.ai',
+  // Issue trackers (links to the issues tracking planned work).
+  'linear.app',
+  'atlassian.net',
+  'gitlab.com',
+  'dev.azure.com',
 ]
 
 /**

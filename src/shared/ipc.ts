@@ -120,7 +120,12 @@ export interface AiDefaults {
   vendor: AiVendor | null
   claude: { model: string | null; effort: string | null }
   codex: { model: string | null; effort: string | null }
+  /** The user's own tools, per CLI: never offered, suggested when a message points at them (the default), or on for every conversation. */
+  tools: { claude: Record<string, ToolUse>; codex: Record<string, ToolUse> }
 }
+
+export const TOOL_USES = ['off', 'suggest', 'always'] as const
+export type ToolUse = (typeof TOOL_USES)[number]
 
 /** Outside agents' MCP endpoint, as Settings shows it. */
 export interface ExternalMcpView {
@@ -241,8 +246,8 @@ export const AI_VENDORS = ['claude', 'codex'] as const satisfies readonly AiVend
  * plan: design a change · document: fill in details from code · explain: answer and highlight · import: map a repo ·
  * drift: diagram vs code · solutions: several alternative designs to compare · decision: draft a decision record.
  */
-export type AiMode = 'plan' | 'document' | 'explain' | 'import' | 'drift' | 'solutions' | 'decision' | 'scan' | 'notes' | 'publish' | 'investigate' | 'flows' | 'resilience' | 'resolve' | 'implement'
-export const AI_MODES = ['plan', 'document', 'explain', 'import', 'drift', 'solutions', 'decision', 'scan', 'notes', 'publish', 'investigate', 'flows', 'resilience', 'resolve', 'implement'] as const satisfies readonly AiMode[]
+export type AiMode = 'plan' | 'document' | 'explain' | 'import' | 'drift' | 'solutions' | 'decision' | 'scan' | 'notes' | 'publish' | 'investigate' | 'flows' | 'resilience' | 'resolve' | 'implement' | 'track'
+export const AI_MODES = ['plan', 'document', 'explain', 'import', 'drift', 'solutions', 'decision', 'scan', 'notes', 'publish', 'investigate', 'flows', 'resilience', 'resolve', 'implement', 'track'] as const satisfies readonly AiMode[]
 
 /** `.harpoon/publish.json`: where the project is published and what was written. */
 export interface PublishSettings {
@@ -325,6 +330,8 @@ export type AiRunStatus = 'starting' | 'running' | 'done' | 'failed' | 'cancelle
 export interface AiTurn {
   role: 'user' | 'assistant'
   text: string
+  /** User turns: the whole message the CLI got (scope, problems, note reference, plan…), for "Context sent". */
+  sent?: string
 }
 
 export interface AiActivity {
@@ -744,7 +751,7 @@ export interface Commands {
   'mcp.addToEditor': { req: { editor: 'vscode' | 'cursor' }; res: void }
   'ai.start': { req: AiStartRequest; res: AiRunView }
   /** `tools`: the user's own MCP tools this conversation may use from now on (absent: keep the run's). */
-  'ai.send': { req: { runId: string; prompt: string; tools?: string[] }; res: AiRunView }
+  'ai.send': { req: { runId: string; prompt: string; tools?: string[]; selection?: AiSelection }; res: AiRunView }
   /** The user's own MCP servers and connectors each CLI has (`force`: ask the CLIs again). */
   'ai.tools': { req: { force?: boolean }; res: UserTools }
   /** Forget a conversation (stop it first). */

@@ -11,8 +11,8 @@ import type { Model } from '@shared/model/schema.ts'
 import { renderSvg } from '@shared/export/svg.ts'
 import { Button } from '../components/ui/Button.tsx'
 import { cn } from '../lib/cn.ts'
-import { ask, reviewProposal } from '../state/ai.ts'
-import { setUi, useStore } from '../state/store.ts'
+import { ask, reply, reviewProposal } from '../state/ai.ts'
+import { getState, setAi, setUi, useStore } from '../state/store.ts'
 import { useModel } from '../canvas/useScene.ts'
 import { reviewModel } from '../canvas/useReview.ts'
 import { Markdown } from '../ai/Markdown.tsx'
@@ -231,7 +231,12 @@ export function CompareView({ set }: { set: SolutionSet }): React.JSX.Element {
             icon={<Sparkles />}
             disabled={refine.trim() === ''}
             onClick={() => {
-              void ask(refine.trim(), { fresh: true, mode: 'solutions', context: { solutionSetId: set.id } })
+              const run = set.runId === null ? undefined : getState().ai.runs[set.runId]
+              if (run !== undefined && run.status !== 'running' && run.status !== 'starting') {
+                setAi({ activeRunId: run.id, mode: 'solutions' })
+                setUi({ aiOpen: true })
+                void reply(run.id, refine.trim())
+              } else void ask(refine.trim(), { mode: 'solutions', context: { solutionSetId: set.id } })
               setRefine('')
             }}
           >

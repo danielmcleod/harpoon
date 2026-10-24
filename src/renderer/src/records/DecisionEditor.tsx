@@ -16,6 +16,8 @@ import { NotesEditor, PhasePicker } from '../panels/inspector/governance.tsx'
 import { Chip, TextArea, TextInput } from '../panels/inspector/fields.tsx'
 import { draftWithAi, markBuilt, openRecord, planImplementation } from './decide.ts'
 import { copyText, openImplement, savePlan } from '../state/ai.ts'
+import { trackWithAi, untracked } from '../ai/track.ts'
+import type { TrackTarget } from '../ai/track.ts'
 import { AI_NOTE_SHORT } from '../ai/AiNote.tsx'
 import { deleteRecord, putDecision, useRecords } from './recordsStore.ts'
 
@@ -35,6 +37,11 @@ export function DecisionEditor({ rec }: { rec: DecisionRecord }): React.JSX.Elem
   const busy = useStore((s) => Object.values(s.ai.runs).some((r) => r.mode === 'decision' && r.decisionId === rec.id && (r.status === 'running' || r.status === 'starting')))
   const [notes, setNotes] = useState('')
   const [planPath, setPlanPath] = useState<string | null>(null)
+  // The decision's planned parts that no issue tracks yet.
+  const untrackedHere = untracked(
+    model,
+    rec.entityIds.flatMap((id): TrackTarget[] => (model.nodes[id] !== undefined ? [{ kind: 'node', id }] : model.connectors[id] !== undefined ? [{ kind: 'connector', id }] : [])),
+  )
   const save = (p: Partial<DecisionRecord>): void => void putDecision({ ...rec, ...p })
   const name = (id: string): string => {
     const n = model.nodes[id]
@@ -184,6 +191,11 @@ export function DecisionEditor({ rec }: { rec: DecisionRecord }): React.JSX.Elem
             <Button size="sm" variant="ghost" icon={<Copy />} onClick={() => void copyText(rec.implementationPlan, 'the plan')}>
               Copy plan
             </Button>
+            {editable && untrackedHere.length > 0 && (
+              <Button size="sm" variant="ghost" icon={<Sparkles />} onClick={() => void trackWithAi(untrackedHere)} title={`Create issues in your tracker for this decision's planned parts, and link them. ${AI_NOTE_SHORT}`}>
+                Create issues ({untrackedHere.length})
+              </Button>
+            )}
             {editable && rec.entityIds.length > 0 && (
               <Button size="sm" variant="ghost" icon={<CheckCheck />} onClick={() => markBuilt(rec.entityIds)} title="Planned and in-progress parts of this decision become existing (undoable)">
                 Mark as built

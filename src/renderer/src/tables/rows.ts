@@ -258,7 +258,12 @@ export interface ChangeRow {
   phaseId: string | null
   /** Sort key: the phase's position (unphased last). */
   phaseOrder: number
+  /** The issues tracking it ("Not tracked" when planned work has none). */
+  issues: string
+  tracked: boolean
 }
+
+const trackedText = (status: Status, issues: readonly { key: string }[]): string => (issues.length > 0 ? issues.map((i) => i.key).join(', ') : status === 'planned' || status === 'in-progress' ? 'Not tracked' : '')
 
 const CHANGE: Record<Status, string> = { planned: 'add', 'in-progress': 'building', deprecated: 'retire', removed: 'removed', existing: '' }
 
@@ -271,13 +276,13 @@ export function changeRows(m: Model): ChangeRow[] {
   }
   const out: ChangeRow[] = []
   for (const n of Object.values(m.nodes)) {
-    if (n.status !== 'existing') out.push({ id: `n/${n.id}`, entity: 'node', entityId: n.id, nodeId: n.id, name: pathLabel(m, n.id), what: KIND_INFO[n.kind].label, change: CHANGE[n.status], status: n.status, phase: phaseName(m, n.phase), phaseId: n.phase, phaseOrder: rank(n.phase) })
+    if (n.status !== 'existing') out.push({ id: `n/${n.id}`, entity: 'node', entityId: n.id, nodeId: n.id, name: pathLabel(m, n.id), what: KIND_INFO[n.kind].label, change: CHANGE[n.status], status: n.status, phase: phaseName(m, n.phase), phaseId: n.phase, phaseOrder: rank(n.phase), issues: trackedText(n.status, n.issues), tracked: n.issues.length > 0 })
     for (const f of n.features) {
-      if (f.status !== 'existing') out.push({ id: `f/${n.id}/${f.id}`, entity: 'feature', entityId: f.id, nodeId: n.id, name: `${pathLabel(m, n.id)} › ${f.name}`, what: 'Feature', change: CHANGE[f.status], status: f.status, phase: phaseName(m, f.phase), phaseId: f.phase, phaseOrder: rank(f.phase) })
+      if (f.status !== 'existing') out.push({ id: `f/${n.id}/${f.id}`, entity: 'feature', entityId: f.id, nodeId: n.id, name: `${pathLabel(m, n.id)} › ${f.name}`, what: 'Feature', change: CHANGE[f.status], status: f.status, phase: phaseName(m, f.phase), phaseId: f.phase, phaseOrder: rank(f.phase), issues: trackedText(f.status, f.issues), tracked: f.issues.length > 0 })
     }
   }
   for (const c of Object.values(m.connectors)) {
-    if (c.status !== 'existing') out.push({ id: `c/${c.id}`, entity: 'connector', entityId: c.id, nodeId: null, name: `${pathLabel(m, c.source)} → ${pathLabel(m, c.target)}`, what: `Connector (${c.channelA.protocol})`, change: CHANGE[c.status], status: c.status, phase: phaseName(m, c.phase), phaseId: c.phase, phaseOrder: rank(c.phase) })
+    if (c.status !== 'existing') out.push({ id: `c/${c.id}`, entity: 'connector', entityId: c.id, nodeId: null, name: `${pathLabel(m, c.source)} → ${pathLabel(m, c.target)}`, what: `Connector (${c.channelA.protocol})`, change: CHANGE[c.status], status: c.status, phase: phaseName(m, c.phase), phaseId: c.phase, phaseOrder: rank(c.phase), issues: trackedText(c.status, c.issues), tracked: c.issues.length > 0 })
   }
   return out.sort((a, b) => a.phaseOrder - b.phaseOrder || a.name.localeCompare(b.name))
 }

@@ -9,7 +9,7 @@ import { cn } from '../lib/cn.ts'
 import { kindIcon, nodeColor } from '../lib/icons.tsx'
 import { centerOn, edit, focus, select } from '../state/actions.ts'
 import { setUi, useStore } from '../state/store.ts'
-import { setAiMode } from '../state/ai.ts'
+import { startIn } from '../state/ai.ts'
 import { useModel } from '../canvas/useScene.ts'
 
 const STATUS_DOT: Record<HxNode['status'], string> = {
@@ -190,8 +190,7 @@ export function ArchitectureTree(): React.JSX.Element {
               type="button"
               className="rounded-md border border-primary/50 bg-primary/10 px-2.5 py-1 text-foreground hover:bg-primary/20"
               onClick={() => {
-                setAiMode('import')
-                setUi({ aiOpen: true })
+                startIn('import')
               }}
             >
               Map this repository with AI
