@@ -1,6 +1,6 @@
 // Comparing proposed solutions: each option's change drawn side by side (new green, changed amber, going red), the
 // facts Harpoon computes from the change, the criteria scores (the AI's, editable), a weighted total, and Choose.
-import { Check, Eye, Flag, Sparkles, Trophy } from 'lucide-react'
+import { Ban, Check, Eye, Flag, Sparkles, Trash2, Trophy } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { Proposal, SolutionSet } from '@shared/ipc.ts'
 import { optionFacts } from '@shared/model/compare.ts'
@@ -17,7 +17,7 @@ import { useModel } from '../canvas/useScene.ts'
 import { reviewModel } from '../canvas/useReview.ts'
 import { Markdown } from '../ai/Markdown.tsx'
 import { TextArea, TextInput } from '../panels/inspector/fields.tsx'
-import { chooseOption, openRecord } from './decide.ts'
+import { abandonComparison, chooseOption, deleteComparison, openRecord } from './decide.ts'
 import { putSet } from './recordsStore.ts'
 
 interface OptionView {
@@ -92,6 +92,16 @@ export function CompareView({ set }: { set: SolutionSet }): React.JSX.Element {
           {set.decisionId !== null && (
             <Button size="sm" variant="outline" onClick={() => openRecord('decision', set.decisionId ?? '')}>
               Open {set.decisionId.toUpperCase()}
+            </Button>
+          )}
+          {editable && set.status === 'open' && (
+            <Button size="sm" variant="outline" icon={<Ban />} onClick={() => void abandonComparison(set)} title="Not going ahead: set its options aside and keep it listed as abandoned">
+              Abandon
+            </Button>
+          )}
+          {editable && (
+            <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" icon={<Trash2 />} onClick={() => void deleteComparison(set)}>
+              Delete
             </Button>
           )}
         </div>

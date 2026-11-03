@@ -1,12 +1,12 @@
 // Deciding: choose one option of a comparison (accept its proposal, set the others aside), and turn the choice into a
 // decision record the team can edit, or have the AI write.
 import type { DecisionRecord, SolutionSet, SourceRef } from '@shared/ipc.ts'
-import { draftFromSet } from '@shared/model/decisions.ts'
+import { afterDeletingComparison, afterDeletingDecision, draftFromSet } from '@shared/model/decisions.ts'
 import { acceptProposal, ask, discardProposal } from '../state/ai.ts'
 import { edit, toast } from '../state/actions.ts'
 import type { Op } from '@shared/model/ops.ts'
 import { getState, setAi, setUi } from '../state/store.ts'
-import { nextAdrNumber, putDecision, putSet, today, useRecords } from './recordsStore.ts'
+import { deleteRecord, nextAdrNumber, putDecision, putSet, today, useRecords } from './recordsStore.ts'
 
 export function openRecord(kind: 'set' | 'decision', id: string): void {
   setUi({ view: 'decisions', records: { kind, id }, asOf: null })
@@ -35,6 +35,51 @@ export async function chooseOption(set: SolutionSet, proposalId: string, o: { pl
   await putSet({ ...set, status: 'decided', chosen: proposalId, decisionId: rec.id })
   openRecord('decision', rec.id)
   toast(`Decided: ${chosen.title}. ${rec.id.toUpperCase()} drafted; edit it or have the AI write it up.`)
+}
+
+/** Not going ahead: the record stays in the log, marked rejected (the status can be changed back). */
+export async function rejectDecision(rec: DecisionRecord): Promise<void> {
+  await putDecision({ ...rec, status: 'rejected' })
+  const model = getState().project?.model
+  const planned = rec.entityIds.filter((id) => model?.nodes[id]?.status === 'planned' || model?.connectors[id]?.status === 'planned').length
+  toast(`${rec.title}: marked rejected.${planned > 0 ? ` Its ${planned} planned part${planned === 1 ? ' stays' : 's stay'} on the diagram; remove them there if they should go too.` : ''}`)
+}
+
+/** Delete a decision record (a duplicate, a mistake) after asking; nothing keeps pointing at it. */
+export async function deleteDecision(rec: DecisionRecord): Promise<void> {
+  if (!window.confirm(`Delete “${rec.title}”? This can’t be undone. To keep it on record instead, mark it rejected.`)) return
+  const r = useRecords.getState()
+  const after = afterDeletingDecision(rec.id, r.decisions, r.sets)
+  await deleteRecord('decisions', rec.id)
+  for (const d of after.decisions) await putDecision(d)
+  for (const s of after.sets) await putSet(s)
+  closeRecord(rec.id)
+}
+
+/** Stop considering a comparison: its options still waiting are set aside, and it stays listed as abandoned. */
+export async function abandonComparison(set: SolutionSet): Promise<void> {
+  if (!window.confirm(`Abandon “${set.title}”? Its options are set aside and can no longer be chosen.`)) return
+  await discardOptions(set)
+  await putSet({ ...set, status: 'abandoned' })
+}
+
+/** Delete a comparison (a duplicate, a mistake) after asking. What was already accepted stays on the diagram. */
+export async function deleteComparison(set: SolutionSet): Promise<void> {
+  if (!window.confirm(`Delete “${set.title}”? This can’t be undone. Options still waiting are discarded; anything already accepted stays on the diagram.`)) return
+  await discardOptions(set)
+  await deleteRecord('solutions', set.id)
+  for (const d of afterDeletingComparison(set.id, useRecords.getState().decisions)) await putDecision(d)
+  closeRecord(set.id)
+}
+
+async function discardOptions(set: SolutionSet): Promise<void> {
+  const proposals = getState().ai.proposals
+  for (const id of set.options) if (proposals[id]?.status === 'pending') await discardProposal(id)
+}
+
+/** The record is gone: stop showing it. */
+function closeRecord(id: string): void {
+  if (getState().ui.records?.id === id) setUi({ records: null })
 }
 
 /** A new, empty decision record (a decision made in a meeting, without a comparison). */

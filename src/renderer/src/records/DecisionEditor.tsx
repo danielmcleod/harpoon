@@ -1,7 +1,7 @@
 // A decision record (ADR): title, status, date, deciders, context, decision, consequences, the options considered,
 // what it concerns, its roadmap phase and what it supersedes. Saved as you type; the AI can write or rewrite it.
 import { openNote } from '../notes/noteActions.ts'
-import { CheckCheck, Copy, FileDown, Hammer, ListChecks, Plus, Sparkles, Trash2, X } from 'lucide-react'
+import { Ban, CheckCheck, Copy, FileDown, Hammer, ListChecks, Plus, Sparkles, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
 import type { DecisionRecord } from '@shared/ipc.ts'
 import { DECISION_STATUSES } from '@shared/ipc.ts'
@@ -14,12 +14,12 @@ import { useModel } from '../canvas/useScene.ts'
 import { reveal } from '../panels/ArchitectureTree.tsx'
 import { NotesEditor, PhasePicker } from '../panels/inspector/governance.tsx'
 import { Chip, TextArea, TextInput } from '../panels/inspector/fields.tsx'
-import { draftWithAi, markBuilt, openRecord, planImplementation } from './decide.ts'
+import { deleteDecision, draftWithAi, markBuilt, openRecord, planImplementation, rejectDecision } from './decide.ts'
 import { copyText, openImplement, savePlan } from '../state/ai.ts'
 import { trackWithAi, untracked } from '../ai/track.ts'
 import type { TrackTarget } from '../ai/track.ts'
 import { AI_NOTE_SHORT } from '../ai/AiNote.tsx'
-import { deleteRecord, putDecision, useRecords } from './recordsStore.ts'
+import { putDecision, useRecords } from './recordsStore.ts'
 
 export const DECISION_STATUS_STYLE: Record<DecisionRecord['status'], string> = {
   proposed: 'bg-info/15 text-info',
@@ -85,6 +85,11 @@ export function DecisionEditor({ rec }: { rec: DecisionRecord }): React.JSX.Elem
                 </option>
               ))}
             </select>
+            {editable && rec.status === 'proposed' && (
+              <Button size="sm" variant="outline" className="h-6" icon={<Ban />} onClick={() => void rejectDecision(rec)} title="Not going ahead: keep it on record, marked rejected">
+                Won’t do
+              </Button>
+            )}
             <input type="date" aria-label="Date" disabled={!editable} value={rec.date} onChange={(e) => e.target.value !== '' && save({ date: e.target.value })} className="h-6 rounded-md border bg-background px-1 text-[11px] disabled:border-transparent" />
             <span className="text-muted-foreground">Deciders</span>
             <div className="w-56">
@@ -294,9 +299,7 @@ export function DecisionEditor({ rec }: { rec: DecisionRecord }): React.JSX.Elem
             variant="ghost"
             className="text-destructive hover:text-destructive"
             icon={<Trash2 />}
-            onClick={() => {
-              if (window.confirm(`Delete ${adrNumber(rec.number)}? Decision records are usually kept and marked rejected or superseded instead.`)) void deleteRecord('decisions', rec.id)
-            }}
+            onClick={() => void deleteDecision(rec)}
           >
             Delete
           </Button>

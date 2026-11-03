@@ -51,3 +51,22 @@ export function draftFromSet(set: SolutionSet, chosenId: string | null, proposal
   }
 }
 
+
+/**
+ * What deleting a decision record changes elsewhere: nothing may keep pointing at it. A record it had superseded goes
+ * back to accepted; a comparison it came from stays, without the link.
+ */
+export function afterDeletingDecision(id: string, decisions: readonly DecisionRecord[], sets: readonly SolutionSet[]): { decisions: DecisionRecord[]; sets: SolutionSet[] } {
+  return {
+    decisions: decisions.flatMap((d) => {
+      if (d.id === id || (d.supersedes !== id && d.supersededBy !== id)) return []
+      return [{ ...d, supersedes: d.supersedes === id ? null : d.supersedes, supersededBy: d.supersededBy === id ? null : d.supersededBy, status: d.supersededBy === id && d.status === 'superseded' ? ('accepted' as const) : d.status }]
+    }),
+    sets: sets.filter((x) => x.decisionId === id).map((x) => ({ ...x, decisionId: null })),
+  }
+}
+
+/** The decision records that must forget a deleted comparison. */
+export function afterDeletingComparison(id: string, decisions: readonly DecisionRecord[]): DecisionRecord[] {
+  return decisions.filter((d) => d.solutionSetId === id).map((d) => ({ ...d, solutionSetId: null }))
+}

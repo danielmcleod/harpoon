@@ -1,6 +1,6 @@
 // The Decisions view: open comparisons (problems with proposed solutions) and the decision log (ADRs). Pick one on
 // the left to compare its options or edit the record.
-import { FileDown, Plus, Scale, ScrollText, Sparkles } from 'lucide-react'
+import { FileDown, Plus, Scale, ScrollText, Sparkles, Ban, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { adrNumber } from '@shared/export/adr.ts'
 import { DECISION_STATUSES } from '@shared/ipc.ts'
@@ -14,7 +14,7 @@ import { startIn } from '../state/ai.ts'
 import { useStore } from '../state/store.ts'
 import { CompareView } from './CompareView.tsx'
 import { DECISION_STATUS_STYLE, DecisionEditor } from './DecisionEditor.tsx'
-import { newDecision, openRecord } from './decide.ts'
+import { abandonComparison, deleteComparison, deleteDecision, newDecision, openRecord, rejectDecision } from './decide.ts'
 import { putSet, useRecords } from './recordsStore.ts'
 
 export function DecisionsView(): React.JSX.Element {
@@ -97,7 +97,7 @@ export function DecisionsView(): React.JSX.Element {
           )}
           <ul className="mb-3 flex flex-col gap-0.5">
             {sets.map((s) => (
-              <li key={s.id}>
+              <li key={s.id} className="group relative">
                 <button
                   type="button"
                   onClick={() => openRecord('set', s.id)}
@@ -109,6 +109,13 @@ export function DecisionsView(): React.JSX.Element {
                     {s.status === 'open' ? `${s.options.length} options` : s.status}
                   </span>
                 </button>
+                {editable && (
+                  <RowActions
+                    name={s.title}
+                    drop={s.status === 'open' ? { label: 'Abandon', run: () => void abandonComparison(s) } : null}
+                    onDelete={() => void deleteComparison(s)}
+                  />
+                )}
               </li>
             ))}
           </ul>
@@ -128,7 +135,7 @@ export function DecisionsView(): React.JSX.Element {
             {decisions
               .filter((d) => filter === 'all' || d.status === filter)
               .map((d) => (
-                <li key={d.id}>
+                <li key={d.id} className="group relative">
                   <button
                     type="button"
                     onClick={() => openRecord('decision', d.id)}
@@ -139,6 +146,9 @@ export function DecisionsView(): React.JSX.Element {
                     <span className="min-w-0 flex-1 truncate">{d.title}</span>
                     <span className={cn('rounded px-1 text-[10px]', DECISION_STATUS_STYLE[d.status])}>{d.status}</span>
                   </button>
+                  {editable && d.status === 'proposed' && (
+                    <RowActions name={d.title} drop={{ label: 'Won’t do', run: () => void rejectDecision(d) }} onDelete={() => void deleteDecision(d)} />
+                  )}
                 </li>
               ))}
           </ul>
@@ -158,6 +168,23 @@ export function DecisionsView(): React.JSX.Element {
           </div>
         )}
       </main>
+    </div>
+  )
+}
+
+/** On a pending row, on hover or focus: drop it from consideration, or delete it (a duplicate, a mistake). */
+function RowActions({ name, drop, onDelete }: { name: string; drop: { label: string; run: () => void } | null; onDelete: () => void }): React.JSX.Element {
+  const btn = 'rounded p-1 text-muted-foreground hover:bg-accent [&_svg]:size-3.5'
+  return (
+    <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center gap-0.5 rounded-md bg-popover pl-1 opacity-0 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
+      {drop !== null && (
+        <button type="button" aria-label={`${drop.label}: ${name}`} title={drop.label} className={cn(btn, 'hover:text-foreground')} onClick={drop.run}>
+          <Ban />
+        </button>
+      )}
+      <button type="button" aria-label={`Delete: ${name}`} title="Delete" className={cn(btn, 'hover:text-destructive')} onClick={onDelete}>
+        <Trash2 />
+      </button>
     </div>
   )
 }

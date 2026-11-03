@@ -130,7 +130,7 @@ function Page({ topic }: { topic: HelpTopic }): React.JSX.Element {
           items={[
             <><B>Tables</B> list services, connectors, endpoints, data, changes and problems, plus a dependency matrix. <B>Split</B> shows a table under the diagram.</>,
             <><B>Roadmap</B> groups planned work by phase (set phases in Project settings). Pick a phase to see the diagram as it will be.</>,
-            <><B>Decisions</B> compares alternative solutions side by side and keeps a log of decision records.</>,
+            <><B>Decisions</B> compares alternative solutions side by side and keeps a log of decision records. Hover a pending one to drop it (Won&apos;t do keeps it marked rejected; a comparison is abandoned) or delete it, for example a duplicate.</>,
             <><B>Notes</B> holds project and meeting notes as Markdown files, with action items collected in one list. The live diagram sits beside the note: what the note @mentions is marked on it, clicking a mention shows that node, and selecting a node offers to mention it. Hide the diagram from the note&apos;s header; open the inspector with the right-panel button.</>,
           ]}
         />
