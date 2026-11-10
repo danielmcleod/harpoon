@@ -30,7 +30,8 @@ export function effectiveTeam(m: Model, id: string): { team: string; inherited: 
   const n = m.nodes[id]
   if (n === undefined) return null
   if (n.team !== null) return { team: n.team, inherited: false }
-  for (const a of ancestorsOf(m, id).reverse()) if (a.team !== null) return { team: a.team, inherited: true }
+  // ancestorsOf lists the nearest first.
+  for (const a of ancestorsOf(m, id)) if (a.team !== null) return { team: a.team, inherited: true }
   return null
 }
 

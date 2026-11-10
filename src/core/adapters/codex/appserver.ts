@@ -118,6 +118,8 @@ export class CodexAppServerRun extends CodexRunBase {
   /** turn/start was sent (a model call may be running). */
   #turnSent = false
   #stopping: Promise<void> | undefined
+  /** The app is quitting: stops skip the graceful step. */
+  #quitting = false
   #terminalWaiters: (() => void)[] = []
   #exitTimer: NodeJS.Timeout | undefined
   #fatalTimer: NodeJS.Timeout | undefined
@@ -140,7 +142,7 @@ export class CodexAppServerRun extends CodexRunBase {
   stop(reason: StopReason): Promise<void> {
     this.stoppedBy ??= reason
     this.n.markKilled(KILL_FOR_REASON[reason])
-    return this.#stop()
+    return reason === 'shutdown' ? this.#quit() : this.#stop()
   }
 
   // ---- launch ---------------------------------------------------------------------------------------------
@@ -574,6 +576,7 @@ export class CodexAppServerRun extends CodexRunBase {
       return this.#stopping
     }
     if (child.exitInfo() !== null) return this.exited.then(() => undefined)
+    if (this.#quitting) return this.#quit()
     this.#stopping = (async () => {
       await stopChild(child, {
         graceful: async () => {
@@ -586,6 +589,25 @@ export class CodexAppServerRun extends CodexRunBase {
         gracefulWaitMs: this.timing.stopTurnMs + this.timing.stopStdinMs,
         stdinWaitMs: this.timing.stopStdinMs,
       })
+      await this.exited
+    })()
+    return this.#stopping
+  }
+
+  /**
+   * The app is quitting and has a few seconds for everything: no turn/interrupt and no wait for the turn to end. The
+   * process tree is killed at once, also when a user's stop is still on its graceful step.
+   */
+  #quit(): Promise<void> {
+    this.#quitting = true
+    const child = this.child
+    // Still resolving or spawning (#launch stops it once there is a process), or already gone.
+    if (child === undefined || child.exitInfo() !== null) return this.#stop()
+    const earlier = this.#stopping
+    this.#stdinClosed = true
+    this.#stopping = (async () => {
+      await stopChild(child, { stdinWaitMs: 0 }).catch(() => undefined)
+      await earlier?.catch(() => undefined)
       await this.exited
     })()
     return this.#stopping

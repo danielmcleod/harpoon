@@ -2,7 +2,10 @@
 import { useEffect } from 'react'
 import { Tooltip } from 'radix-ui'
 import { subscribeEvents } from '../ipc/client.ts'
-import { boot, handleEvents } from '../state/actions.ts'
+import { boot, handleEvents, openProjectDialog } from '../state/actions.ts'
+import { KEYS, useShortcut } from '../lib/keys.ts'
+import { isViewer } from '../lib/viewer.ts'
+import { CommandPalette } from './CommandPalette.tsx'
 import { useStore } from '../state/store.ts'
 import { HelpDialog } from '../help/HelpDialog.tsx'
 import { ImplementDialog } from '../ai/ImplementDialog.tsx'
@@ -13,6 +16,7 @@ import { Workspace } from './Workspace.tsx'
 export function App(): React.JSX.Element {
   const ready = useStore((s) => s.ready)
   const hasProject = useStore((s) => s.project !== null)
+  useShortcut(KEYS.open, () => void openProjectDialog(), { description: 'Open a folder or repository', enabled: !isViewer() })
 
   useEffect(() => {
     const off = subscribeEvents(handleEvents)
@@ -26,6 +30,7 @@ export function App(): React.JSX.Element {
         {!ready ? null : hasProject ? <Workspace /> : <Welcome />}
       </div>
       {ready && <HelpDialog />}
+      {ready && hasProject && <CommandPalette />}
       {ready && <ImplementDialog />}
       <Toasts />
     </Tooltip.Provider>

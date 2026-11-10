@@ -39,7 +39,10 @@ export interface SpawnChildOptions {
   label?: SpawnLabel | string
   maxLineBytes?: number
   tap?: TapFn
-  /** Default: true on POSIX (own process group), false on win32 (the app's job object reaps the child). */
+  /**
+   * Default: true on POSIX (own process group), false on win32. Nothing reaps a win32 child when the app dies (there
+   * is no job object): whoever started it stops it, tree and all (kill.ts), also on quit.
+   */
   detached?: boolean
   /** How long to wait for stdout/stderr to close after the process exits (a grandchild may hold the pipe). */
   stdioCloseGraceMs?: number

@@ -10,7 +10,7 @@ import type { AiAsk, AiMode, AiRunView, AiSelection } from '@shared/ipc.ts'
 import { Button } from '../components/ui/Button.tsx'
 import { cn } from '../lib/cn.ts'
 import { loadUserTools } from '../state/ai.ts'
-import { answerAsk, ask, canvasSelection, cancelRun, clearHistory, copyText, deleteConversation, loadProviders, newConversation, openImplement, removeWorktree, reply, savePlan, setAiMode, setVendor } from '../state/ai.ts'
+import { answerAsk, ask, cancelQueued, canvasSelection, cancelRun, clearHighlight, clearHistory, copyText, deleteConversation, loadProviders, newConversation, openImplement, queueReply, removeWorktree, reply, savePlan, setAiMode, setVendor } from '../state/ai.ts'
 import { ToolHint } from './ToolHint.tsx'
 import { invoke } from '../ipc/client.ts'
 import { markBuilt } from '../records/decide.ts'
@@ -99,6 +99,8 @@ export function AiPanel(): React.JSX.Element {
   const [text, setText] = useState('')
   const [showHistory, setShowHistory] = useState(false)
   const run = activeId !== null ? runs[activeId] : undefined
+  // The conversation follows new output only while the reader is at the end of it (not when they scrolled up).
+  const atEnd = useRef(true)
   // Opening a conversation shows (and keeps using) the tools it had.
   const runId = run?.id
   useEffect(() => {
@@ -229,11 +231,17 @@ export function AiPanel(): React.JSX.Element {
         </div>
       )}
 
-      <div className="scroll-region min-h-0 flex-1 overflow-y-auto">
+      <div
+        className="scroll-region min-h-0 flex-1 overflow-y-auto"
+        onScroll={(e) => {
+          const el = e.currentTarget
+          atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+        }}
+      >
         {run === undefined ? (
           <Intro mode={mode} />
         ) : (
-          <Conversation run={run} />
+          <Conversation key={run.id} run={run} atEndRef={atEnd} />
         )}
         {run === undefined && orphanProposals.length > 0 && (
           <div className="flex flex-col gap-2 px-3 pb-3">
@@ -293,7 +301,7 @@ export function AiPanel(): React.JSX.Element {
           </p>
         </div>
       ) : (
-        <ReplyBox run={run} busy={busy} />
+        <ReplyBox key={run.id} run={run} busy={busy} />
       )}
     </aside>
   )
@@ -323,16 +331,22 @@ function StatusDot({ status }: { status: AiRunView['status'] }): React.JSX.Eleme
   return <span className={cn('size-2 shrink-0 rounded-full', status === 'done' ? 'bg-success' : status === 'failed' ? 'bg-destructive' : 'bg-muted-foreground')} />
 }
 
-function Conversation({ run }: { run: AiRunView }): React.JSX.Element {
+function Conversation({ run, atEndRef }: { run: AiRunView; atEndRef: React.RefObject<boolean> }): React.JSX.Element {
   const proposal = useStore((s) => (run.proposalId !== null ? s.ai.proposals[run.proposalId] : undefined))
   const highlight = useStore((s) => s.ai.highlight)
   const [showTools, setShowTools] = useState(false)
   const end = useRef<HTMLDivElement>(null)
   const busy = run.status === 'running' || run.status === 'starting'
   const lastText = run.turns.at(-1)?.text.length ?? 0
+  // Opening a conversation, and sending a message in it, go to the end; streamed output only follows from there.
+  const userTurns = run.turns.reduce((n, t) => n + (t.role === 'user' ? 1 : 0), 0)
   useEffect(() => {
+    atEndRef.current = true
     end.current?.scrollIntoView({ block: 'end' })
-  }, [run.turns.length, lastText, run.activity.length, proposal?.id])
+  }, [userTurns, atEndRef])
+  useEffect(() => {
+    if (atEndRef.current) end.current?.scrollIntoView({ block: 'end' })
+  }, [run.turns.length, lastText, run.activity.length, proposal?.id, atEndRef])
   const tools = run.activity
   const failed = tools.filter((t) => t.status === 'failed').length
   // Retry sends the last thing the user typed (the opening request of a button-started run has nothing to retype).
@@ -390,10 +404,10 @@ function Conversation({ run }: { run: AiRunView }): React.JSX.Element {
       )}
       {run.build !== null && <BuildCard run={run} busy={busy} />}
       {run.mode === 'implement' && run.plan !== null && !busy && <PlanActions run={run} />}
-      {highlight !== null && highlight.runId === run.id && highlight.note !== null && (
+      {highlight !== null && highlight.runId === run.id && (
         <div className="rounded-md border border-info/40 bg-info/10 px-2.5 py-1.5 text-[11.5px]">
-          {highlight.note}
-          <button type="button" className="ml-2 text-muted-foreground underline" onClick={() => setAi({ highlight: null })}>
+          {highlight.note ?? `Highlighting ${highlight.nodeIds.length} node${highlight.nodeIds.length === 1 ? '' : 's'} on the diagram.`}
+          <button type="button" className="ml-2 text-muted-foreground underline" onClick={clearHighlight}>
             clear
           </button>
         </div>
@@ -741,6 +755,8 @@ function SentContext({ sent }: { sent: string }): React.JSX.Element {
 }
 
 const selKey = (s: AiSelection): string => [...s.nodeIds, '|', ...s.connectorIds, '|', s.focusId ?? ''].join(',')
+/** Per conversation: the selection that already went with a message (so it is offered once). */
+const sentSel = new Map<string, string>()
 
 /**
  * Talking in a conversation: a reply box only (starting something else is "New chat"). What the user selected on the
@@ -748,44 +764,36 @@ const selKey = (s: AiSelection): string => [...s.nodeIds, '|', ...s.connectorIds
  */
 function ReplyBox({ run, busy }: { run: AiRunView; busy: boolean }): React.JSX.Element {
   const [text, setText] = useState('')
-  const [queued, setQueued] = useState<string | null>(null)
+  // Queued replies live in the store, per conversation: they go to this one, and still go with the panel closed.
+  const queued = useStore((s) => s.ai.queued[run.id])
   const [dropped, setDropped] = useState(false)
   const selection = useStore((s) => s.ui.selection)
   const focusId = useStore((s) => s.ui.focusId)
   const nodes = useStore((s) => s.project?.model.nodes)
-  const sentSel = useRef<Record<string, string>>({})
   const sel = useMemo(() => canvasSelection(), [selection, focusId]) // eslint-disable-line react-hooks/exhaustive-deps
   const key = selKey(sel)
   const hasSel = sel.nodeIds.length > 0 || sel.connectorIds.length > 0
-  const include = hasSel && !dropped && sentSel.current[run.id] !== key
+  const include = hasSel && !dropped && sentSel.get(run.id) !== key
   useEffect(() => setDropped(false), [key])
   const label = sel.nodeIds.length > 0 ? sel.nodeIds.map((id) => nodes?.[id]?.name ?? id).slice(0, 2).join(', ') + (sel.nodeIds.length > 2 ? ` +${sel.nodeIds.length - 2}` : '') : `${sel.connectorIds.length} connector${sel.connectorIds.length === 1 ? '' : 's'}`
-
-  const sendNow = (t: string): void => {
-    if (include) sentSel.current[run.id] = key
-    void reply(run.id, t, include ? { selection: sel } : {})
-  }
-  // A reply queued while the CLI worked goes as soon as it is done.
-  useEffect(() => {
-    if (busy || queued === null) return
-    sendNow(queued)
-    setQueued(null)
-  }, [busy, queued]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const submit = (): void => {
     const t = text.trim()
     if (t === '') return
-    if (busy) setQueued(t)
-    else sendNow(t)
+    if (include) sentSel.set(run.id, key)
+    // A reply typed while the CLI works waits in the store and goes as soon as this conversation is done.
+    const status = getState().ai.runs[run.id]?.status
+    if (status === 'running' || status === 'starting') queueReply(run.id, t, include ? sel : null)
+    else void reply(run.id, t, include ? { selection: sel } : {})
     setText('')
   }
 
   return (
     <div className="shrink-0 border-t p-2">
-      {queued !== null && (
+      {queued !== undefined && (
         <div className="mb-1.5 flex items-center gap-2 rounded-md border bg-background/60 px-2 py-1 text-[11px] text-muted-foreground">
-          <span className="min-w-0 flex-1 truncate">Will send when it finishes: {queued}</span>
-          <button type="button" className="hover:text-foreground" onClick={() => setQueued(null)}>
+          <span className="min-w-0 flex-1 truncate">Will send when it finishes: {queued.text}</span>
+          <button type="button" className="hover:text-foreground" onClick={() => cancelQueued(run.id)}>
             Cancel
           </button>
         </div>

@@ -12,6 +12,14 @@ import type { HexCoord, Model } from '../../shared/model/schema.ts'
 
 export class DraftError extends Error {}
 
+/**
+ * The entity with this id, or undefined. Ids come from the agent, and the model's records are plain objects: a bare
+ * `record[id]` would find "constructor" (and every other Object.prototype name) in all of them.
+ */
+export function own<T>(record: Readonly<Record<string, T>>, id: string): T | undefined {
+  return Object.hasOwn(record, id) ? record[id] : undefined
+}
+
 export class Draft {
   readonly base: Model
   #model: Model
@@ -48,7 +56,7 @@ export class Draft {
 
   /** A node id from an id or an exact (case-insensitive) name; throws when unknown or ambiguous. */
   nodeRef(ref: string, what = 'node'): string {
-    if (this.#model.nodes[ref] !== undefined) return ref
+    if (own(this.#model.nodes, ref) !== undefined) return ref
     const want = ref.trim().toLowerCase()
     const byName = Object.values(this.#model.nodes).filter((n) => n.name.toLowerCase() === want || n.id === slugify(ref))
     if (byName.length === 1 && byName[0] !== undefined) return byName[0].id
@@ -57,12 +65,12 @@ export class Draft {
   }
 
   connectorRef(ref: string): string {
-    if (this.#model.connectors[ref] !== undefined) return ref
+    if (own(this.#model.connectors, ref) !== undefined) return ref
     throw new DraftError(`Unknown connector "${ref}".`)
   }
 
   newNodeId(name: string, wanted?: string): string {
-    const taken = (x: string): boolean => this.#model.nodes[x] !== undefined
+    const taken = (x: string): boolean => own(this.#model.nodes, x) !== undefined
     if (wanted !== undefined && wanted !== '') {
       const id = slugify(wanted, 80)
       if (taken(id)) throw new DraftError(`A node "${id}" already exists; pick another id or update it instead.`)
@@ -72,7 +80,7 @@ export class Draft {
   }
 
   newConnectorId(source: string, target: string, wanted?: string): string {
-    const taken = (x: string): boolean => this.#model.connectors[x] !== undefined
+    const taken = (x: string): boolean => own(this.#model.connectors, x) !== undefined
     if (wanted !== undefined && wanted !== '') {
       const id = slugify(wanted, 80)
       if (taken(id)) throw new DraftError(`A connector "${id}" already exists.`)
@@ -87,12 +95,12 @@ export class Draft {
     const taken = new Set(
       Object.values(m.nodes)
         .filter((n) => n.parentId === parentId)
-        .map((n) => m.layout[n.id])
+        .map((n) => own(m.layout, n.id))
         .filter((c): c is HexCoord => c !== undefined)
         .map(coordKey),
     )
-    const nearNode = near === null ? undefined : m.nodes[near]
-    const origin = nearNode !== undefined && nearNode.parentId === parentId ? (m.layout[nearNode.id] ?? { q: 0, r: 0 }) : { q: 0, r: 0 }
+    const nearNode = near === null ? undefined : own(m.nodes, near)
+    const origin = nearNode !== undefined && nearNode.parentId === parentId ? (own(m.layout, nearNode.id) ?? { q: 0, r: 0 }) : { q: 0, r: 0 }
     return { at: nearestFreeCell(origin, (c) => taken.has(coordKey(c))), placed: nearNode !== undefined }
   }
 
@@ -108,7 +116,7 @@ export class Draft {
   settlePlacement(): void {
     const byLevel = new Map<string | null, Set<string>>()
     for (const id of this.#unplaced) {
-      const n = this.#model.nodes[id]
+      const n = own(this.#model.nodes, id)
       if (n === undefined) continue
       byLevel.set(n.parentId, (byLevel.get(n.parentId) ?? new Set()).add(id))
     }
@@ -121,7 +129,7 @@ export class Draft {
       const level: Op[] = []
       for (const id of ids) {
         const at = cells.get(id)
-        const was = m.layout[id]
+        const was = own(m.layout, id)
         if (at !== undefined && (was === undefined || was.q !== at.q || was.r !== at.r)) level.push({ op: 'setLayout', id, at })
       }
       if (level.length === 0) continue

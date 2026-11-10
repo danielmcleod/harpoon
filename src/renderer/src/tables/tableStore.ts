@@ -39,6 +39,11 @@ export const useTables = create<TablesState>(() => ({
   matrixInner: false,
 }))
 
+/** Another project: its rows are not these, so filters, ticked rows and expansion start over. */
+export function resetTables(): void {
+  useTables.setState(useTables.getInitialState(), true)
+}
+
 export function setTab(tab: ViewTab): void {
   useTables.setState({ tab })
 }

@@ -75,7 +75,59 @@ function parseJson(text: string, file: string): unknown {
   }
 }
 
+
+/** One message for the repairs made on load (the first few, then how many more). */
+export function repairNotice(repairs: readonly string[]): string {
+  const shown = repairs.slice(0, 3).join(' ')
+  const more = repairs.length > 3 ? ` And ${repairs.length - 3} more (see the log).` : ''
+  return `This project had broken references and was repaired: ${shown}${more} Undo is not possible; check the file's history if this is unexpected.`
+}
+
+/**
+ * Mend what a git merge or a hand edit can leave behind (each side valid on its own, the result not): a node inside a
+ * parent that does not exist, or inside itself through a parent cycle, moves to the top level; a connector with a
+ * missing end is dropped. Changes `m` in place and returns one line per repair (empty: nothing was wrong).
+ */
+export function repairModel(m: Model): string[] {
+  const repairs: string[] = []
+  const detach = (id: string, why: string): void => {
+    const n = m.nodes[id]
+    if (n === undefined) return
+    m.nodes[id] = { ...n, parentId: null }
+    repairs.push(`${n.name} (${id}) ${why}; it is now on the top level.`)
+  }
+  for (const n of Object.values(m.nodes)) {
+    if (n.parentId !== null && !Object.hasOwn(m.nodes, n.parentId)) detach(n.id, `was inside "${n.parentId}", which does not exist`)
+  }
+  // Walk up from every node (sorted, so the same file always mends the same way); the link that closes a cycle goes.
+  for (const id of Object.keys(m.nodes).sort()) {
+    const seen = new Set<string>([id])
+    for (let cur = id; ; ) {
+      const up: string | null = m.nodes[cur]?.parentId ?? null
+      if (up === null) break
+      if (seen.has(up)) {
+        detach(cur, `was inside "${up}", which is inside it`)
+        break
+      }
+      seen.add(up)
+      cur = up
+    }
+  }
+  for (const c of Object.values(m.connectors)) {
+    const missing = [c.source, c.target].filter((end) => !Object.hasOwn(m.nodes, end))
+    if (missing.length === 0) continue
+    delete m.connectors[c.id]
+    repairs.push(`Connector ${c.id} (${c.source} → ${c.target}) was dropped: ${missing.map((x) => `"${x}"`).join(' and ')} ${missing.length === 1 ? 'does' : 'do'} not exist.`)
+  }
+  return repairs
+}
+
 export function parseModel(projectText: string, layoutText: string | null): Model {
+  return parseModelWithRepairs(projectText, layoutText).model
+}
+
+/** `parseModel`, plus what had to be mended to make the file load (see `repairModel`). */
+export function parseModelWithRepairs(projectText: string, layoutText: string | null): { model: Model; repairs: string[] } {
   const raw = parseJson(projectText, 'project.json')
   const version = (raw as { schemaVersion?: unknown } | null)?.schemaVersion
   if (typeof version === 'number' && version > SCHEMA_VERSION) {
@@ -93,12 +145,15 @@ export function parseModel(projectText: string, layoutText: string | null): Mode
     // A broken layout is not fatal: nodes without coordinates are auto-placed.
     if (l.success) layout = l.data
   }
-  return modelFromFiles(p.data, layout)
+  const model = modelFromFiles(p.data, layout)
+  return { model, repairs: repairModel(model) }
 }
 
 export interface LoadedProject {
   model: Model
   texts: { project: string; layout: string | null }
+  /** What `repairModel` mended on the way in (absent: nothing). The texts are the files as read, unrepaired. */
+  repairs?: string[]
 }
 
 export async function readProject(root: string): Promise<LoadedProject> {
@@ -110,7 +165,8 @@ export async function readProject(root: string): Promise<LoadedProject> {
     throw new HarpoonError('NOT_FOUND', `No Harpoon project in ${root} (missing ${HARPOON_DIRNAME}/project.json).`)
   }
   const layout = await readFile(paths.layout, 'utf8').catch(() => null)
-  return { model: parseModel(project, layout), texts: { project, layout } }
+  const { model, repairs } = parseModelWithRepairs(project, layout)
+  return { model, texts: { project, layout }, ...(repairs.length > 0 ? { repairs } : {}) }
 }
 
 export async function writeProjectTexts(root: string, texts: { project: string; layout: string }): Promise<void> {

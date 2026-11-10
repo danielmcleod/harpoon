@@ -18,6 +18,8 @@ export class ExternalMcp {
   #host: McpHost | null = null
   #route: McpRoute | null = null
   #error: string | null = null
+  /** Settings changes run one after another (two at once would both stop, then both try to listen on the port). */
+  #changes: Promise<unknown> = Promise.resolve()
 
   constructor(o: { state: AppStateStore; ai: AiRunner; log: Logger; bridge: BridgeCommand | null }) {
     this.#o = o
@@ -51,7 +53,13 @@ export class ExternalMcp {
     if (h !== null) await h.close()
   }
 
-  async set(req: { enabled?: boolean; port?: number; regenerate?: boolean }): Promise<ExternalMcpView> {
+  set(req: { enabled?: boolean; port?: number; regenerate?: boolean }): Promise<ExternalMcpView> {
+    const done = this.#changes.then(() => this.#set(req))
+    this.#changes = done.catch(() => undefined)
+    return done
+  }
+
+  async #set(req: { enabled?: boolean; port?: number; regenerate?: boolean }): Promise<ExternalMcpView> {
     await this.stop()
     this.#error = null
     await this.#o.state.setExternalMcp({

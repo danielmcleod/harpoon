@@ -40,6 +40,14 @@ const ProposalFileZ = z.object({
     .default(null),
 })
 
+/** Ids name files in the proposals folder. */
+const SAFE_ID = /^[A-Za-z0-9._-]+$/
+
+async function readProposal(file: string): Promise<Proposal> {
+  const p = ProposalFileZ.parse(JSON.parse(await readFile(file, 'utf8')))
+  return { ...p, ops: parseOps(p.ops) }
+}
+
 /** Mark everything a batch adds as planned (accept-as-planned keeps a roadmap layer visible). */
 /** New things become planned (and land in `phase`, when given); removals become deprecations in that phase. */
 export function asPlanned(ops: readonly Op[], phase: string | null = null): Op[] {
@@ -56,6 +64,8 @@ export function asPlanned(ops: readonly Op[], phase: string | null = null): Op[]
 export class ProposalStore {
   readonly #items = new Map<string, Proposal>()
   #root: string | null = null
+  /** Counts loads, so one that a later load overtook adds nothing. */
+  #loads = 0
   readonly #bus: EventBus
   readonly #log: Logger
   readonly #projects: ProjectManager
@@ -66,20 +76,25 @@ export class ProposalStore {
     this.#projects = o.projects
   }
 
-  /** Load the open project's saved proposals (call after a project opens). */
+  /**
+   * Load the open project's saved proposals (call after a project opens). Opening another project while this still
+   * reads files starts a new load; the overtaken one stops, so its proposals never land in the other project's list.
+   */
   async load(root: string | null): Promise<void> {
+    const mine = ++this.#loads
     this.#items.clear()
     this.#root = root
     if (root === null) return
     const dir = projectPaths(root).proposalsDir
     const files = await readdir(dir).catch(() => [] as string[])
     for (const f of files.filter((x) => x.endsWith('.json'))) {
-      try {
-        const p = ProposalFileZ.parse(JSON.parse(await readFile(join(dir, f), 'utf8')))
-        this.#items.set(p.id, { ...p, ops: parseOps(p.ops) })
-      } catch (err) {
+      const p = await readProposal(join(dir, f)).catch((err: unknown) => {
         this.#log.warn('skipping an unreadable proposal', { file: f, err: err instanceof Error ? err.message : String(err) })
-      }
+        return undefined
+      })
+      if (mine !== this.#loads) return
+      // One saved while this was reading (a run that just ended) is newer than its file.
+      if (p !== undefined && !this.#items.has(p.id)) this.#items.set(p.id, p)
     }
   }
 
@@ -91,7 +106,27 @@ export class ProposalStore {
     return this.#items.get(id)
   }
 
-  async put(p: Proposal): Promise<void> {
+  /**
+   * A proposal of the project in `root`, also when that project is not the open one (an AI run asks for its own
+   * project's): from the list when it is open, else from its file.
+   */
+  async find(id: string, root: string): Promise<Proposal | undefined> {
+    if (root === this.#root) return this.#items.get(id)
+    if (!SAFE_ID.test(id)) return undefined
+    return readProposal(join(projectPaths(root).proposalsDir, `${id}.json`)).catch(() => undefined)
+  }
+
+  /**
+   * Save a proposal. `root`: the project it belongs to (an AI run's own, which may have been closed or swapped for
+   * another since the run started); it is then written to that project's folder and shows up when that project is
+   * open again, never in the list of the one that happens to be open. Absent: the open project.
+   */
+  async put(p: Proposal, root?: string): Promise<void> {
+    if (root !== undefined && root !== this.#root) {
+      if (!SAFE_ID.test(p.id)) throw new HarpoonError('VALIDATION', 'That proposal id cannot be a file name.')
+      await writeJsonAtomic(join(projectPaths(root).proposalsDir, `${p.id}.json`), p, { mode: 0o644 })
+      return
+    }
     this.#items.set(p.id, p)
     this.#bus.emit({ kind: 'proposal', proposal: p })
     if (this.#root !== null) await writeJsonAtomic(join(projectPaths(this.#root).proposalsDir, `${p.id}.json`), p, { mode: 0o644 })

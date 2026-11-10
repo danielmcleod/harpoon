@@ -73,7 +73,7 @@ export function renderSvg(m: Model, v: ExportView, marks?: SvgMarks, o: { cropTo
     const pts = [...ids].flatMap((id) => {
       // A node inside a collapsed container is drawn as the container.
       let cur: string | null = id
-      while (cur !== null && !scene.nodes.has(cur)) cur = m.nodes[cur]?.parentId ?? null
+      for (let i = 0; cur !== null && !scene.nodes.has(cur) && i < 64; i++) cur = m.nodes[cur]?.parentId ?? null
       const sn = cur === null ? undefined : scene.nodes.get(cur)
       return sn === undefined ? [] : [{ x: sn.center.x - sn.r, y: sn.center.y - sn.r }, { x: sn.center.x + sn.r, y: sn.center.y + sn.r }]
     })
@@ -170,6 +170,8 @@ export function renderSvg(m: Model, v: ExportView, marks?: SvgMarks, o: { cropTo
 }
 
 const xq = (s: string): string => esc(s).replace(/\n/g, '&#10;')
+/** A draw.io label: the cells are `html=1`, so the value is HTML (its lines escaped, then once more as an attribute). */
+const xlabel = (...lines: string[]): string => xq(lines.map(esc).join('<br>'))
 
 /** draw.io / diagrams.net: hexagons at the scene positions, containers behind, dual connectors with labels. */
 export function renderDrawio(m: Model, v: ExportView): string {
@@ -197,9 +199,9 @@ export function renderDrawio(m: Model, v: ExportView): string {
       sn.expanded ? 'verticalAlign=top;spacingTop=12;fontStyle=1' : '',
       n.boundary === 'external' || n.status === 'planned' ? 'dashed=1' : '',
     ].filter((x) => x !== '').join(';')
-    const label = `${n.name}${n.techStack !== null && !sn.expanded ? `\n${n.techStack}` : ''}`
+    const label = n.techStack !== null && !sn.expanded ? xlabel(n.name, n.techStack) : xlabel(n.name)
     cells.push(
-      `<mxCell id="${xq(cid(id))}" value="${xq(label)}" style="${style};" vertex="1" parent="1"><mxGeometry x="${f1(sn.center.x - w / 2)}" y="${f1(sn.center.y - h / 2)}" width="${f1(w)}" height="${f1(h)}" as="geometry"/></mxCell>`,
+      `<mxCell id="${xq(cid(id))}" value="${label}" style="${style};" vertex="1" parent="1"><mxGeometry x="${f1(sn.center.x - w / 2)}" y="${f1(sn.center.y - h / 2)}" width="${f1(w)}" height="${f1(h)}" as="geometry"/></mxCell>`,
     )
   }
   let i = 0
@@ -208,9 +210,9 @@ export function renderDrawio(m: Model, v: ExportView): string {
     if (c === undefined) continue
     const color = pal.edge[protocolFamily(c.channelA.protocol)]
     const base = `endArrow=openThin;endFill=0;html=1;strokeColor=${color};strokeWidth=1.5;${c.sync === 'async' ? 'dashed=1;' : ''}`
-    cells.push(`<mxCell id="e${i++}" value="${xq(c.label ?? c.channelA.protocol)}" style="${base}" edge="1" parent="1" source="${xq(cid(e.source))}" target="${xq(cid(e.target))}"><mxGeometry relative="1" as="geometry"/></mxCell>`)
+    cells.push(`<mxCell id="e${i++}" value="${xlabel(c.label ?? c.channelA.protocol)}" style="${base}" edge="1" parent="1" source="${xq(cid(e.source))}" target="${xq(cid(e.target))}"><mxGeometry relative="1" as="geometry"/></mxCell>`)
     if (c.duplex && c.channelB !== null) {
-      cells.push(`<mxCell id="e${i++}" value="${xq(c.channelB.protocol)}" style="${base}dashed=1;opacity=70;" edge="1" parent="1" source="${xq(cid(e.target))}" target="${xq(cid(e.source))}"><mxGeometry relative="1" as="geometry"/></mxCell>`)
+      cells.push(`<mxCell id="e${i++}" value="${xlabel(c.channelB.protocol)}" style="${base}dashed=1;opacity=70;" edge="1" parent="1" source="${xq(cid(e.target))}" target="${xq(cid(e.source))}"><mxGeometry relative="1" as="geometry"/></mxCell>`)
     }
   }
   return `<mxfile host="Harpoon"><diagram name="${xq(m.meta.name)}"><mxGraphModel grid="1" gridSize="10" page="0"><root>\n${cells.join('\n')}\n</root></mxGraphModel></diagram></mxfile>\n`

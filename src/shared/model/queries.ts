@@ -36,10 +36,14 @@ export function descendantIds(m: Model, id: string): string[] {
     else list.push(n.id)
   }
   const out: string[] = []
+  // A parent cycle (a hand-merged file) must not loop: every node is listed once, and never `id` itself.
+  const seen = new Set<string>([id])
   const stack = [...(kids.get(id) ?? [])]
   while (stack.length > 0) {
     const cur = stack.pop()
     if (cur === undefined) break
+    if (seen.has(cur)) continue
+    seen.add(cur)
     out.push(cur)
     stack.push(...(kids.get(cur) ?? []))
   }

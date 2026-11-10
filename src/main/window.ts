@@ -17,12 +17,16 @@ export interface MainWindowOptions {
   target: RendererTarget
   theme: ThemeState
   showImmediately: boolean
-  log: Pick<Logger, 'error'>
+  log: Pick<Logger, 'error' | 'warn' | 'info'>
   /** The window and taskbar icon (out/renderer/icon.png). */
   icon?: string
   /** The page failed to load (smoke runs fail on it). */
   onLoadFailed?: (reason: string) => void
 }
+
+/** A crashed page is reloaded at most this many times within the window, then left as it is. */
+export const CRASH_RELOAD_MAX = 3
+export const CRASH_RELOAD_WINDOW_MS = 60_000
 
 export function createMainWindow(o: MainWindowOptions): BrowserWindow {
   const win = new BrowserWindow({
@@ -53,6 +57,22 @@ export function createMainWindow(o: MainWindowOptions): BrowserWindow {
     // -3 (ABORTED) is a navigation replaced by another one (e.g. a reload), not a failure.
     if (isMainFrame && code !== -3) failed(`${description} (${code})`)
   })
+  // A page whose process died (out of memory, a crash) is loaded again: main holds the project and the runs, so
+  // the page only has to fetch them. A page that keeps dying is left alone after a few tries.
+  let crashes: number[] = []
+  win.webContents.on('render-process-gone', (_e, details) => {
+    o.log.error('renderer process gone', { reason: details.reason, exitCode: details.exitCode })
+    if (details.reason === 'clean-exit' || win.isDestroyed()) return
+    const now = Date.now()
+    crashes = [...crashes.filter((t) => now - t < CRASH_RELOAD_WINDOW_MS), now]
+    if (crashes.length > CRASH_RELOAD_MAX) {
+      o.log.error('renderer keeps crashing: not reloading again')
+      return
+    }
+    win.webContents.reload()
+  })
+  win.on('unresponsive', () => o.log.warn('renderer unresponsive'))
+  win.on('responsive', () => o.log.info('renderer responsive again'))
   // The dev server's page, or the built renderer as app://harpoon/index.html (renderer-files.ts).
   const load = win.loadURL(o.target.url)
   // did-fail-load reports the same failure; the promise is only kept from going unhandled.

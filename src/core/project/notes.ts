@@ -1,11 +1,12 @@
 // The note taker's files: `.harpoon/notes/project.md` (the project notebook) and one folder per meeting series
 // (`.harpoon/notes/<series>/_series.md` plus one `<yyyy-mm-dd>.md` per meeting). Markdown with YAML front matter, so
 // they read well on GitHub and in any editor. Tasks are `- [ ]` lines; mentions are `[@Name](harpoon:node/<id>)`.
-import { lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readdir, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { parse, stringify } from 'yaml'
 import { z } from 'zod'
 import { HarpoonError } from '../errors.ts'
+import { writeFileAtomic } from '../store/atomic.ts'
 import type { NoteDoc, NoteFrontMatter, NoteIndex, NoteMeta, NoteTask } from '../../shared/ipc.ts'
 import { NOTE_ACTIONS, NOTE_ITEM_KINDS } from '../../shared/ipc.ts'
 import { HARPOON_DIRNAME } from './files.ts'
@@ -111,12 +112,32 @@ export async function readNote(root: string, path: string): Promise<NoteDoc> {
   return d
 }
 
-export async function writeNote(root: string, path: string, meta: NoteFrontMatter, body: string): Promise<void> {
+/**
+ * Changes to one note, one at a time: ticking a task reads the note and writes it back, and must not cross the
+ * editor's save of the same file.
+ */
+const turns = new Map<string, Promise<unknown>>()
+function inTurn<T>(file: string, fn: () => Promise<T>): Promise<T> {
+  const run = (turns.get(file) ?? Promise.resolve()).then(fn, fn)
+  const tail = run.catch(() => undefined)
+  turns.set(file, tail)
+  void tail.then(() => {
+    if (turns.get(file) === tail) turns.delete(file)
+  })
+  return run
+}
+
+/** Atomic (a temp file renamed over the note), so a crash or a full disk never leaves half a note. */
+async function writeDoc(root: string, path: string, meta: NoteFrontMatter, body: string): Promise<void> {
   const file = join(notesDir(root), safeNotePath(path))
   await assertNoLinks(root, safeNotePath(path))
   await mkdir(dirname(file), { recursive: true })
   await assertNoLinks(root, safeNotePath(path))
-  await writeFile(file, serializeNote(meta, body), 'utf8')
+  await writeFileAtomic(file, serializeNote(meta, body), { mode: 0o644 })
+}
+
+export async function writeNote(root: string, path: string, meta: NoteFrontMatter, body: string): Promise<void> {
+  await inTurn(join(notesDir(root), safeNotePath(path)), () => writeDoc(root, path, meta, body))
 }
 
 export async function deleteNote(root: string, path: string): Promise<void> {
@@ -208,10 +229,12 @@ export async function createEntry(root: string, seriesId: string, o: { date: str
 
 /** Tick or untick one task line. */
 export async function toggleTask(root: string, path: string, line: number, done: boolean): Promise<void> {
-  const d = await readNote(root, path)
-  const lines = d.body.split(/\r?\n/)
-  const l = lines[line]
-  if (l === undefined || !/^\s*[-*] \[( |x|X)\] /.test(l)) throw new HarpoonError('CONFLICT', 'That task moved; reopen the note.')
-  lines[line] = l.replace(/\[( |x|X)\]/, done ? '[x]' : '[ ]')
-  await writeNote(root, path, d.meta, lines.join('\n'))
+  await inTurn(join(notesDir(root), safeNotePath(path)), async () => {
+    const d = await readNote(root, path)
+    const lines = d.body.split(/\r?\n/)
+    const l = lines[line]
+    if (l === undefined || !/^\s*[-*] \[( |x|X)\] /.test(l)) throw new HarpoonError('CONFLICT', 'That task moved; reopen the note.')
+    lines[line] = l.replace(/\[( |x|X)\]/, done ? '[x]' : '[ ]')
+    await writeDoc(root, path, d.meta, lines.join('\n'))
+  })
 }

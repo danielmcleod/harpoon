@@ -85,6 +85,7 @@ const AppStateZ = z.object({
 export class AppStateStore {
   readonly #file: string
   #state: AppState = DEFAULT_APP_STATE
+  #writing: Promise<unknown> = Promise.resolve()
 
   constructor(file: string) {
     this.#file = file
@@ -108,6 +109,16 @@ export class AppStateStore {
     return this.#state
   }
 
+  /**
+   * Write the state as it is now, after the writes already on their way: two changes that overlap each write the
+   * whole file, and the older one must not be the one that lands last.
+   */
+  #persist(): Promise<void> {
+    const run = this.#writing.then(() => writeJsonAtomic(this.#file, this.#state))
+    this.#writing = run.catch(() => undefined)
+    return run
+  }
+
   async patch(p: AppStatePatch): Promise<AppState> {
     this.#state = {
       ...this.#state,
@@ -117,13 +128,13 @@ export class AppStateStore {
       ...(p.ai !== undefined ? { ai: p.ai } : {}),
       ...(p.implement !== undefined ? { implement: p.implement } : {}),
     }
-    await writeJsonAtomic(this.#file, this.#state)
+    await this.#persist()
     return this.#state
   }
 
   async setExternalMcp(p: Partial<AppState['externalMcp']>): Promise<AppState['externalMcp']> {
     this.#state = { ...this.#state, externalMcp: { ...this.#state.externalMcp, ...p } }
-    await writeJsonAtomic(this.#file, this.#state)
+    await this.#persist()
     return this.#state.externalMcp
   }
 
@@ -133,7 +144,7 @@ export class AppStateStore {
     if (path === null) delete cur[repoId]
     else cur[repoId] = path
     this.#state = { ...this.#state, repoPaths: { ...this.#state.repoPaths, [projectId]: cur } }
-    await writeJsonAtomic(this.#file, this.#state)
+    await this.#persist()
     return cur
   }
 
@@ -142,7 +153,7 @@ export class AppStateStore {
     if (server === null) delete next[projectId]
     else next[projectId] = server
     this.#state = { ...this.#state, notionServers: next }
-    await writeJsonAtomic(this.#file, this.#state)
+    await this.#persist()
   }
 
   /** Move (or add) a project to the top of the recent list. */
@@ -150,13 +161,13 @@ export class AppStateStore {
     const entry: RecentProject = { path, name: name ?? basename(path), openedAt: now }
     const rest = this.#state.recentProjects.filter((r) => r.path !== path)
     this.#state = { ...this.#state, recentProjects: [entry, ...rest].slice(0, RECENT_MAX) }
-    await writeJsonAtomic(this.#file, this.#state)
+    await this.#persist()
     return this.#state.recentProjects
   }
 
   async forgetRecent(path: string): Promise<RecentProject[]> {
     this.#state = { ...this.#state, recentProjects: this.#state.recentProjects.filter((r) => r.path !== path) }
-    await writeJsonAtomic(this.#file, this.#state)
+    await this.#persist()
     return this.#state.recentProjects
   }
 }

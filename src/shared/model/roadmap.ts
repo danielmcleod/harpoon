@@ -52,6 +52,8 @@ export function modelAsOf(m: Model, phaseId: string): Projection | null {
   const fateOfNode = (n: HxNode): Fate => {
     const known = fates.get(n.id)
     if (known !== undefined) return known
+    // Its own fate until the parent's is known (so a parent cycle cannot recurse forever).
+    fates.set(n.id, fate(n.status, rankOf(n.phase), i))
     const parent = n.parentId === null ? undefined : m.nodes[n.parentId]
     const pf = parent === undefined ? 'present' : fateOfNode(parent)
     let f = fate(n.status, rankOf(n.phase), i)

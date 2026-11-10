@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { childrenOf } from '../../shared/model/queries.ts'
 import { ProjectFileZ, layoutFileOf, projectFileOf } from '../../shared/model/schema.ts'
 import { flowSequence } from '../../shared/model/sequence.ts'
-import type { HxConnector, HxNode, Model } from '../../shared/model/schema.ts'
+import type { HxBoundary, HxConnector, HxNode, Model } from '../../shared/model/schema.ts'
 
 export function harpoonJson(m: Model): string {
   return `${JSON.stringify({ ...projectFileOf(m), layout: layoutFileOf(m).nodes }, null, 2)}\n`
@@ -69,11 +69,31 @@ export function projectJsonSchema(): string {
 
 // ---- Mermaid ------------------------------------------------------------------------------------------------------
 
-const mid = (id: string): string => `n_${id.replace(/[^A-Za-z0-9_]/g, '_')}`
+/**
+ * Names a diagram language accepts for the model's node ids: other characters become "_", and ids that would then
+ * read the same (`pay-api`, `pay.api`) get a number, in id order so an export is stable.
+ */
+function diagramIds(m: Model, taken = new Set<string>()): (id: string) => string {
+  const safe = (id: string): string => id.replace(/[^A-Za-z0-9_]/g, '_')
+  const names = new Map<string, string>()
+  for (const id of Object.keys(m.nodes).sort()) {
+    let name = safe(id)
+    for (let i = 2; taken.has(name); i++) name = `${safe(id)}_${i}`
+    taken.add(name)
+    names.set(id, name)
+  }
+  return (id) => names.get(id) ?? safe(id)
+}
+
 const mlabel = (s: string): string => s.replace(/"/g, "'").replace(/[\r\n]+/g, ' ')
+/** Sequence diagrams end a statement at ";": write it as its entity. */
+const mtext = (s: string): string => mlabel(s).replace(/;/g, '#59;')
 
 export function mermaidFlowchart(m: Model): string {
   const lines = ['flowchart LR']
+  const name = diagramIds(m)
+  // Nodes are `n_…`, the subgraph a container is drawn as is `g_…`: the two never clash.
+  const mid = (id: string): string => `n_${name(id)}`
   const shape = (n: HxNode): string => {
     const label = `"${mlabel(n.name)}${n.techStack !== null ? `<br/><small>${mlabel(n.techStack)}</small>` : ''}"`
     switch (n.kind) {
@@ -93,7 +113,7 @@ export function mermaidFlowchart(m: Model): string {
     for (const n of childrenOf(m, parentId).sort((a, b) => a.name.localeCompare(b.name))) {
       const kids = childrenOf(m, n.id)
       if (kids.length > 0) {
-        lines.push(`${indent}subgraph ${mid(n.id)}_g["${mlabel(n.name)}"]`)
+        lines.push(`${indent}subgraph g_${name(n.id)}["${mlabel(n.name)}"]`)
         lines.push(`${indent}  ${shape(n)}`)
         emit(n.id, `${indent}  `)
         lines.push(`${indent}end`)
@@ -117,15 +137,17 @@ export function mermaidFlowchart(m: Model): string {
 
 export function mermaidSequences(m: Model): string {
   const out: string[] = []
+  const name = diagramIds(m)
+  const mid = (id: string): string => `n_${name(id)}`
   for (const f of Object.values(m.flows)) {
     const seq = flowSequence(m, f)
     const arrow = { sync: '->>', async: '-)', reply: '-->>' } as const
     out.push(
       [
-        `%% ${f.name}`,
+        `%% ${f.name.replace(/[\r\n]+/g, ' ')}`,
         'sequenceDiagram',
-        ...seq.participants.map((p) => `  participant ${mid(p.id)} as ${mlabel(p.name)}`),
-        ...seq.messages.map((s) => `  ${mid(s.from)}${arrow[s.kind]}${mid(s.to)}: ${mlabel(s.label)}`),
+        ...seq.participants.map((p) => `  participant ${mid(p.id)} as ${mtext(p.name)}`),
+        ...seq.messages.map((s) => `  ${mid(s.from)}${arrow[s.kind]}${mid(s.to)}: ${mtext(s.label)}`),
       ].join('\n'),
     )
   }
@@ -134,12 +156,30 @@ export function mermaidSequences(m: Model): string {
 
 // ---- PlantUML C4 ------------------------------------------------------------------------------------------------
 
-const pid = (id: string): string => id.replace(/[^A-Za-z0-9_]/g, '_')
 const pq = (s: string): string => `"${s.replace(/"/g, "'").replace(/[\r\n]+/g, ' ')}"`
 
 export function plantUml(m: Model): string {
-  const lines = ['@startuml', '!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml', '', `title ${m.meta.name}`, '']
-  const inBoundary = new Set(Object.values(m.boundaries).flatMap((b) => b.nodeIds))
+  const lines = ['@startuml', '!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml', '', `title ${m.meta.name.replace(/[\r\n]+/g, ' ')}`, '']
+  // Nodes, the boundary a container is drawn as (`…_b`) and zones share one namespace of aliases: nodes take theirs
+  // first, the others a numbered one when theirs is gone (a zone and a node may have the same id).
+  const aliases = new Set<string>()
+  const pid = diagramIds(m, aliases)
+  const alias = (wanted: string): string => {
+    const base = wanted.replace(/[^A-Za-z0-9_]/g, '_')
+    let name = base
+    for (let i = 2; aliases.has(name); i++) name = `${base}_${i}`
+    aliases.add(name)
+    return name
+  }
+  // An element is declared once, so a node that sits in several zones is drawn in the smallest of them (PlantUML
+  // cannot overlap boundaries), and a zone is drawn on its own level: the top, or inside its container.
+  const zoneOf = new Map<string, HxBoundary>()
+  for (const b of Object.values(m.boundaries)) {
+    for (const id of b.nodeIds) {
+      const cur = zoneOf.get(id)
+      if (m.nodes[id]?.parentId === b.parentId && (cur === undefined || b.nodeIds.length < cur.nodeIds.length)) zoneOf.set(id, b)
+    }
+  }
   const element = (n: HxNode, indent: string): string => {
     const desc = pq(n.description.split('\n')[0]?.slice(0, 120) ?? '')
     const tech = pq(n.techStack ?? n.vendor ?? '')
@@ -150,25 +190,26 @@ export function plantUml(m: Model): string {
     return `${indent}Container(${pid(n.id)}, ${pq(n.name)}, ${tech}, ${desc})`
   }
   const emitNode = (n: HxNode, indent: string): void => {
-    const kids = childrenOf(m, n.id)
-    if (kids.length === 0) {
+    if (childrenOf(m, n.id).length === 0) {
       lines.push(element(n, indent))
       return
     }
-    lines.push(`${indent}Container_Boundary(${pid(n.id)}_b, ${pq(n.name)}) {`)
+    lines.push(`${indent}Container_Boundary(${alias(`${n.id}_b`)}, ${pq(n.name)}) {`)
     lines.push(element(n, `${indent}  `))
-    for (const k of kids) emitNode(k, `${indent}  `)
+    emitLevel(n.id, `${indent}  `)
     lines.push(`${indent}}`)
   }
-  for (const b of Object.values(m.boundaries)) {
-    lines.push(`${b.type === 'third-party' ? 'Enterprise_Boundary' : 'System_Boundary'}(${pid(b.id)}, ${pq(b.name)}) {`)
-    for (const id of b.nodeIds) {
-      const n = m.nodes[id]
-      if (n !== undefined && n.parentId === b.parentId) emitNode(n, '  ')
+  const emitLevel = (parentId: string | null, indent: string): void => {
+    const kids = childrenOf(m, parentId)
+    for (const b of Object.values(m.boundaries)) {
+      if (b.parentId !== parentId) continue
+      lines.push(`${indent}${b.type === 'third-party' ? 'Enterprise_Boundary' : 'System_Boundary'}(${alias(b.id)}, ${pq(b.name)}) {`)
+      for (const n of kids) if (zoneOf.get(n.id) === b) emitNode(n, `${indent}  `)
+      lines.push(`${indent}}`)
     }
-    lines.push('}')
+    for (const n of kids) if (!zoneOf.has(n.id)) emitNode(n, indent)
   }
-  for (const n of childrenOf(m, null)) if (!inBoundary.has(n.id)) emitNode(n, '')
+  emitLevel(null, '')
   lines.push('')
   const rel = (c: HxConnector): string => `Rel(${pid(c.source)}, ${pid(c.target)}, ${pq(c.label ?? c.channelA.protocol)}, ${pq([c.channelA.protocol, c.channelA.auth, c.sync === 'async' ? 'async' : null].filter((x) => x !== null).join(' / '))})`
   for (const c of Object.values(m.connectors)) lines.push(rel(c))

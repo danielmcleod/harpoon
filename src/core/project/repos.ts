@@ -1,7 +1,7 @@
 // The repositories a project describes. The project file says which repos (id, remote, a path hint); where each one
 // is cloned on this machine lives in app state, since teammates keep their clones in different places. Discovery
 // lists the git repos under a folder, with their remotes, so they can be linked in a click.
-import { readFile, readdir, stat } from 'node:fs/promises'
+import { readFile, readdir, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, isAbsolute, join, parse, relative, resolve } from 'node:path'
 import type { DiscoveredRepo, ResolvedRepo } from '../../shared/ipc.ts'
@@ -107,16 +107,19 @@ export function sameRemote(a: string | null, b: string | null): boolean {
 /**
  * Why a path hint from the (shared) project file must not be trusted, or null when it may be used: the AI reads
  * every linked repo, so a hint may only name a git repository, never the home folder, a drive root, or a folder
- * that contains the project.
+ * that contains the project. Each is compared by where it really is, so a link inside the project folder cannot
+ * stand in for one of them, and without regard to case where the file system has none (Windows, macOS).
  */
 export async function hintProblem(root: string, hinted: string, home: string = homedir()): Promise<string | null> {
-  const p = resolve(hinted)
-  const sameAs = (a: string, b: string): boolean => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b)
-  if (sameAs(p, parse(p).root)) return 'it is a drive root'
-  if (sameAs(p, resolve(home))) return 'it is your home folder'
-  const up = relative(p, resolve(root))
+  const real = (p: string): Promise<string> => realpath(resolve(p)).catch(() => resolve(p))
+  const fold = (p: string): string => (process.platform === 'win32' || process.platform === 'darwin' ? p.toLowerCase() : p)
+  const at = await real(hinted)
+  const p = fold(at)
+  if (p === parse(p).root) return 'it is a drive root'
+  if (p === fold(await real(home))) return 'it is your home folder'
+  const up = relative(p, fold(await real(root)))
   if (up !== '' && !up.startsWith('..') && !isAbsolute(up)) return 'it contains the project folder'
-  if ((await inspectRepo(p)) === null) return 'it is not a git repository'
+  if ((await inspectRepo(at)) === null) return 'it is not a git repository'
   return null
 }
 

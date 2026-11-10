@@ -19,12 +19,15 @@ import { LeftPanel } from '../panels/LeftPanel.tsx'
 import { deleteSelection } from '../panels/selectionOps.ts'
 import { focus, redo, select, setMode, undo } from '../state/actions.ts'
 import { getState, setUi, useStore } from '../state/store.ts'
+import { clearHighlight } from '../state/ai.ts'
+import { isViewer } from '../lib/viewer.ts'
 import { invoke } from '../ipc/client.ts'
 import { SimPanel } from '../sim/SimPanel.tsx'
 import { Timeline } from '../sim/Timeline.tsx'
 import { useSimLoop } from '../sim/useSimLoop.ts'
 import { useSimOverlays } from '../sim/useSimOverlays.ts'
 import { TopBar } from './TopBar.tsx'
+import { StrataView } from '../strata/StrataView.tsx'
 import { PresentationBar } from '../present/PresentationBar.tsx'
 import { usePresent } from '../present/presentStore.ts'
 import { useFlowOverlays } from '../canvas/useFlowOverlays.ts'
@@ -54,18 +57,24 @@ export function Workspace(): React.JSX.Element {
   const decisionsView = !simMode && !presenting && view === 'decisions'
   const notesView = !simMode && !presenting && view === 'notes'
   const showTables = !simMode && !presenting && (view === 'tables' || view === 'split')
-  const showCanvas = !board && !decisionsView && !notesView && (!showTables || view === 'split')
+  const levelsView = !simMode && !presenting && view === 'strata'
+  const showCanvas = !board && !decisionsView && !notesView && !levelsView && (!showTables || view === 'split')
 
   useEffect(() => {
+    // Delete and Backspace act on the diagram's selection, so only where the diagram is what you are looking at.
+    const onDiagram = (): boolean => {
+      const ui = getState().ui
+      return ui.mode === 'sim' || ui.view === 'canvas' || ui.view === 'split'
+    }
     const offs = [
       registerShortcut(KEYS.undo, () => void undo(), { allowInInputs: false }),
       registerShortcut(KEYS.redo, () => void redo(), { allowInInputs: false }),
       registerShortcut(KEYS.redoAlt, () => void redo(), { allowInInputs: false }),
       registerShortcut(KEYS.save, () => void invoke('project.save')),
-      registerShortcut(KEYS.toggleMode, () => setMode(getState().ui.mode === 'edit' ? 'docs' : 'edit')),
-      registerShortcut('delete', () => deleteSelection(), { allowInInputs: false }),
+      registerShortcut('delete', () => onDiagram() && deleteSelection(), { allowInInputs: false }),
       registerShortcut('backspace', () => {
         const ui = getState().ui
+        if (!onDiagram()) return
         if (ui.selection !== null && ui.mode === 'edit') deleteSelection()
         else if (ui.focusId !== null) focus(getState().project?.model.nodes[ui.focusId]?.parentId ?? null)
       }, { allowInInputs: false }),
@@ -73,14 +82,22 @@ export function Workspace(): React.JSX.Element {
         const ui = getState().ui
         if (ui.connectFrom !== null) setUi({ connectFrom: null })
         else if (ui.blast !== null) setUi({ blast: null })
+        else if (getState().ai.highlight !== null) clearHighlight()
         else if (ui.search !== '') setUi({ search: '' })
         else select(null)
       }, { allowInInputs: false }),
-      registerShortcut(KEYS.ai, () => setUi((ui) => ({ aiOpen: !ui.aiOpen }))),
+      // Not while typing: Ctrl+Enter in a text box sends or commits what is typed there.
       registerShortcut(KEYS.focusNode, () => {
         const sel = getState().ui.selection
         if (sel?.kind === 'node' && sel.ids[0] !== undefined) focus(sel.ids[0])
-      }),
+      }, { allowInInputs: false }),
+      // The exported viewer is read-only and has no AI: no way into Edit mode or the AI panel.
+      ...(isViewer()
+        ? []
+        : [
+            registerShortcut(KEYS.toggleMode, () => setMode(getState().ui.mode === 'edit' ? 'docs' : 'edit')),
+            registerShortcut(KEYS.ai, () => setUi((ui) => ({ aiOpen: !ui.aiOpen }))),
+          ]),
     ]
     return () => offs.forEach((off) => off())
   }, [])
@@ -99,6 +116,11 @@ export function Workspace(): React.JSX.Element {
                 {!presenting && <CanvasChrome />}
                 {simMode && !presenting && <Timeline />}
               </Canvas>
+            </div>
+          )}
+          {levelsView && (
+            <div className="relative min-h-0 flex-1">
+              <StrataView />
             </div>
           )}
           {board && <RoadmapBoard />}

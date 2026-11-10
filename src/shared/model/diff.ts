@@ -96,8 +96,9 @@ function pick<T extends object>(obj: T, keys: readonly string[]): Partial<T> {
 }
 
 /**
- * Ops that turn `a` into `b`. Order: flows/boundaries out, connectors out, nodes in (parents first), node updates
- * (reparenting), nodes out (deepest first), connectors in/updated, boundaries and flows in/updated, layout, meta.
+ * Ops that turn `a` into `b`, in an order `applyOps` accepts. Order: flows/boundaries out, connectors out, nodes in
+ * (parents first), node updates (reparenting), connectors updated (re-pointed away from nodes that go), nodes out
+ * (deepest first), connectors in, boundaries and flows in/updated, layout, meta.
  */
 export function diffModels(a: Model, b: Model): Op[] {
   const s = compareModels(a, b)
@@ -114,9 +115,53 @@ export function diffModels(a: Model, b: Model): Op[] {
     .sort((x, y) => depthIn(b, x.id) - depthIn(b, y.id))
   for (const n of added) ops.push({ op: 'addNode', node: n, at: b.layout[n.id] ?? null })
 
+  // Node updates. A move into another node waits until that node is not inside it (as things stand on the way from
+  // `a` to `b`); when no pending move can go (two nodes trade places), they are lifted to the top level first.
+  const parent = new Map<string, string | null>()
+  for (const n of Object.values(a.nodes)) parent.set(n.id, n.parentId)
+  for (const n of added) parent.set(n.id, n.parentId)
+  const inside = (id: string, under: string): boolean => {
+    const seen = new Set<string>()
+    for (let cur: string | null = under; cur !== null && !seen.has(cur); cur = parent.get(cur) ?? null) {
+      if (cur === id) return true
+      seen.add(cur)
+    }
+    return false
+  }
+  const moves: { id: string; to: string; patch: Partial<HxNode> }[] = []
   for (const c of of(s.nodes, 'modified')) {
     const n = b.nodes[c.id]
-    if (n !== undefined) ops.push({ op: 'updateNode', id: c.id, patch: pick(n, c.fields) })
+    if (n === undefined) continue
+    const patch = pick(n, c.fields)
+    if (c.fields.includes('parentId') && n.parentId !== null) moves.push({ id: c.id, to: n.parentId, patch })
+    else {
+      ops.push({ op: 'updateNode', id: c.id, patch })
+      if (c.fields.includes('parentId')) parent.set(c.id, null)
+    }
+  }
+  let lifted = false
+  while (moves.length > 0) {
+    const i = moves.findIndex((x) => !inside(x.id, x.to))
+    if (i < 0 && !lifted) {
+      lifted = true
+      for (const x of moves) {
+        if (parent.get(x.id) === null) continue
+        ops.push({ op: 'updateNode', id: x.id, patch: { parentId: null } })
+        parent.set(x.id, null)
+      }
+      continue
+    }
+    // Still stuck after lifting: `b` itself has a cycle, and applyOps says so.
+    const [x] = moves.splice(Math.max(i, 0), 1)
+    if (x === undefined) break
+    ops.push({ op: 'updateNode', id: x.id, patch: x.patch })
+    parent.set(x.id, x.to)
+  }
+
+  // Before the nodes go: a connector that stays may have been re-pointed away from one of them.
+  for (const c of of(s.connectors, 'modified')) {
+    const k = b.connectors[c.id]
+    if (k !== undefined) ops.push({ op: 'updateConnector', id: c.id, patch: pick(k, c.fields) })
   }
 
   const removed = of(s.nodes, 'removed').sort((x, y) => depthIn(a, y.id) - depthIn(a, x.id))
@@ -125,10 +170,6 @@ export function diffModels(a: Model, b: Model): Op[] {
   for (const c of of(s.connectors, 'added')) {
     const k = b.connectors[c.id]
     if (k !== undefined) ops.push({ op: 'addConnector', connector: k })
-  }
-  for (const c of of(s.connectors, 'modified')) {
-    const k = b.connectors[c.id]
-    if (k !== undefined) ops.push({ op: 'updateConnector', id: c.id, patch: pick(k, c.fields) })
   }
   for (const c of of(s.boundaries, 'added')) {
     const x = b.boundaries[c.id]

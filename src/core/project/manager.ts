@@ -11,7 +11,8 @@ import { parseOps } from '../../shared/model/ops.ts'
 import type { Op } from '../../shared/model/ops.ts'
 import { sampleOps } from '../../shared/model/sample.ts'
 import type { ApplyRequest, FolderInfo, ProjectView } from '../../shared/ipc.ts'
-import { exists, initProject, normalizeRoot, parseModel, projectPaths, readProject, serializeModel, writeProjectTexts } from './files.ts'
+import { removeStaleTemps } from '../store/atomic.ts'
+import { exists, initProject, normalizeRoot, parseModel, projectPaths, readProject, repairNotice, serializeModel, writeProjectTexts } from './files.ts'
 
 /** Is `p` inside (or equal to) `dir`? */
 const isInside = (dir: string, p: string): boolean => {
@@ -21,8 +22,13 @@ const isInside = (dir: string, p: string): boolean => {
 import { ProjectSession } from './session.ts'
 import type { ApplyOptions } from './session.ts'
 
+/** A temp file this old belongs to no save still running (another Harpoon may have the same folder open). */
+const STALE_TEMP_MS = 60_000
+
 export class ProjectManager {
   #session: ProjectSession | null = null
+  /** Opening and closing, one at a time: two opens that overlap must not leave a session behind with its watchers. */
+  #switching: Promise<unknown> = Promise.resolve()
   readonly #bus: EventBus
   readonly #log: Logger
   readonly #state: AppStateStore
@@ -105,14 +111,8 @@ export class ProjectManager {
   async create(dir: string, name?: string, template: 'blank' | 'sample' = 'blank'): Promise<ProjectView> {
     const root = resolve(normalizeRoot(dir))
     const loaded = await initProject(root, name ?? (template === 'sample' ? 'Commerce Platform' : undefined))
-    const view = await this.#adopt(root, loaded)
-    if (template === 'sample') {
-      // Not undoable: the sample is the starting point.
-      this.require().apply(sampleOps(), { label: 'sample', source: 'import', record: false })
-      await this.require().flush()
-      return this.require().view()
-    }
-    return view
+    // Not undoable: the sample is the starting point.
+    return this.#adopt(root, loaded, template === 'sample' ? (s) => s.apply(sampleOps(), { label: 'sample', source: 'import', record: false }) : undefined)
   }
 
   async open(dir: string): Promise<ProjectView> {
@@ -121,19 +121,42 @@ export class ProjectManager {
     return this.#adopt(root, loaded)
   }
 
-  async #adopt(root: string, loaded: Awaited<ReturnType<typeof readProject>>): Promise<ProjectView> {
-    await this.close(false)
-    const session = new ProjectSession({ root, model: loaded.model, texts: loaded.texts, bus: this.#bus, log: this.#log })
-    session.watch()
-    this.#session = session
-    await this.#state.touchRecent(root, loaded.model.meta.name || basename(root))
-    const view = session.view()
-    this.#bus.emit({ kind: 'project-opened', project: view })
-    this.#log.info('project opened', { root })
-    return view
+  #inTurn<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.#switching.then(fn, fn)
+    this.#switching = run.catch(() => undefined)
+    return run
   }
 
-  async close(announce = true): Promise<void> {
+  /** Make `loaded` the open project (closing the one before it); `seed` fills a new project before it is returned. */
+  #adopt(root: string, loaded: Awaited<ReturnType<typeof readProject>>, seed?: (s: ProjectSession) => void): Promise<ProjectView> {
+    return this.#inTurn(async () => {
+      await this.#closeNow(false)
+      // What a Harpoon that was killed mid-save left behind (the folder is usually committed).
+      await removeStaleTemps(projectPaths(root).dir, { depth: 2, minAgeMs: STALE_TEMP_MS })
+      const session = new ProjectSession({ root, model: loaded.model, texts: loaded.texts, bus: this.#bus, log: this.#log })
+      session.watch()
+      this.#session = session
+      await this.#state.touchRecent(root, loaded.model.meta.name || basename(root))
+      this.#bus.emit({ kind: 'project-opened', project: session.view() })
+      this.#log.info('project opened', { root })
+      // What a merge left broken was repaired on load: say so, because the next save writes the repaired model.
+      if (loaded.repairs !== undefined) {
+        this.#log.warn('the project was repaired on load', { repairs: loaded.repairs })
+        this.#bus.emit({ kind: 'toast', level: 'warn', message: repairNotice(loaded.repairs) })
+      }
+      if (seed !== undefined) {
+        seed(session)
+        await session.flush()
+      }
+      return session.view()
+    })
+  }
+
+  close(announce = true): Promise<void> {
+    return this.#inTurn(() => this.#closeNow(announce))
+  }
+
+  async #closeNow(announce: boolean): Promise<void> {
     const s = this.#session
     if (s === null) return
     this.#session = null

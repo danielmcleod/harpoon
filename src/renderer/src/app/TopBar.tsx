@@ -10,9 +10,13 @@ import { ExportMenu } from '../panels/ExportMenu.tsx'
 import { isViewer } from '../lib/viewer.ts'
 import { PresentButton } from '../present/PresentButton.tsx'
 import { HistoryMenu, SaveStatus } from './HistoryMenu.tsx'
+import { useRef } from 'react'
 import { closeProject, openProjectDialog, redo, saveAsFile, saveCopyTo, setMode, undo } from '../state/actions.ts'
+import { nodeMatches } from '../canvas/useScene.ts'
+import { reveal } from '../panels/ArchitectureTree.tsx'
+import { KEYS, formatCombo, useShortcut } from '../lib/keys.ts'
 import { invoke } from '../ipc/client.ts'
-import { setUi, useStore } from '../state/store.ts'
+import { getState, setUi, useStore } from '../state/store.ts'
 import type { Mode } from '../state/store.ts'
 
 const MODES: { id: Mode; label: string; icon: typeof PencilRuler; hint: string }[] = [
@@ -33,6 +37,27 @@ export function TopBar(): React.JSX.Element {
   // In notes the right panel is the inspector beside the diagram, closed until asked for.
   const inNotes = useStore((s) => s.ui.view === 'notes' && s.ui.mode !== 'sim')
   const notesInspector = useStore((s) => s.ui.notesInspector)
+  const searchBox = useRef<HTMLInputElement>(null)
+  useShortcut(KEYS.find, () => {
+    searchBox.current?.focus()
+    searchBox.current?.select()
+  }, { description: 'Search' })
+  // Enter walks through the matches (names first), bringing each into view on the diagram.
+  const jumped = useRef(-1)
+  const jump = (): void => {
+    const s = getState()
+    const m = s.project?.model
+    const q = s.ui.search.trim().toLowerCase()
+    if (m === undefined || q === '') return
+    const rank = (name: string): number => (name.toLowerCase().startsWith(q) ? 0 : name.toLowerCase().includes(q) ? 1 : 2)
+    const hits = Object.values(m.nodes).filter((n) => nodeMatches(n, q)).sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name))
+    if (hits.length === 0) return
+    jumped.current = (jumped.current + 1) % hits.length
+    const hit = hits[jumped.current]
+    if (hit === undefined) return
+    if (s.ui.mode !== 'sim' && s.ui.view !== 'canvas' && s.ui.view !== 'split') setUi({ view: 'canvas' })
+    reveal(m, hit.id)
+  }
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-panel px-3">
@@ -132,9 +157,23 @@ export function TopBar(): React.JSX.Element {
       <label className="relative flex items-center">
         <Search className="pointer-events-none absolute left-2 size-3.5 text-muted-foreground" />
         <input
+          ref={searchBox}
           value={search}
-          onChange={(e) => setUi({ search: e.target.value })}
+          onChange={(e) => {
+            jumped.current = -1
+            setUi({ search: e.target.value })
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') jump()
+            else if (e.key === 'Escape') {
+              // Esc clears what is typed; with nothing typed it leaves the box.
+              if (search !== '') setUi({ search: '' })
+              else e.currentTarget.blur()
+              jumped.current = -1
+            }
+          }}
           placeholder="Search nodes, features…"
+          title={`Search (${formatCombo(KEYS.find)}); Enter jumps to the next match`}
           aria-label="Search"
           className="h-8 w-32 rounded-md border bg-background pr-2 pl-7 text-xs transition-[width] outline-none focus:w-56 focus:border-ring xl:w-44"
         />

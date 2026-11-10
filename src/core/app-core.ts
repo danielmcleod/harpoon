@@ -3,7 +3,8 @@
 // reach here (main/router.ts MAIN_COMMANDS).
 import { getPublish, notionServers, setPublish } from './project/publish.ts'
 import { createEntry, createSeries, deleteNote, notesIndex, notesTasksAndMentions, readNote, toggleTask, writeNote } from './project/notes.ts'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { assertNotLink, confinedDir } from './project/confine.ts'
+import { removeStaleTemps, writeFileAtomic } from './store/atomic.ts'
 import { adrFilename, adrMarkdown } from '../shared/export/adr.ts'
 import type { Cmd, Req, Res, Result } from '../shared/ipc.ts'
 import { AppStateStore } from './app-state.ts'
@@ -50,6 +51,8 @@ export interface Core {
 export async function createCore(o: CoreOptions): Promise<Core> {
   const paths = homePaths(o.home)
   await ensureHome(paths)
+  // state.json's temp files, left by a Harpoon that was killed mid-write (never one still writing: see the age).
+  await removeStaleTemps(paths.home, { minAgeMs: 60_000 })
   const bus = new EventBus()
   const state = new AppStateStore(paths.state)
   await state.load()
@@ -160,10 +163,15 @@ export async function createCore(o: CoreOptions): Promise<Core> {
     'decision.exportAdrs': async () => {
       const s = projects.require()
       const all = await listCollection(s.root, 'decisions')
-      const dir = join(s.root, 'docs', 'adr')
-      await mkdir(dir, { recursive: true })
-      for (const d of all) await writeFile(join(dir, adrFilename(d)), adrMarkdown(d, s.model, all), 'utf8')
-      return { dir, count: all.length }
+      // The records and the docs folder both come with the (shared) project: a link there must not turn the export
+      // into a write somewhere else on the disk.
+      const dir = await confinedDir(s.root, 'docs/adr')
+      for (const d of all) {
+        const file = join(dir, adrFilename(d))
+        await assertNotLink(file)
+        await writeFileAtomic(file, adrMarkdown(d, s.model, all), { mode: 0o644 })
+      }
+      return { dir: join(s.root, 'docs', 'adr'), count: all.length }
     },
     'collection.list': (r) => listCollection(projects.require().root, r.kind),
     'collection.put': (r) => putCollection(projects.require().root, r.kind, r.item),

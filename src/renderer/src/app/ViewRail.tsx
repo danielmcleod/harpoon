@@ -1,7 +1,7 @@
 // The view rail: a slim column at the left edge for switching what the main area shows (the diagram, tables,
 // roadmap, decisions, notes, the traffic simulator), with project settings and the theme at the bottom. It keeps
 // the top bar for the project, editing and sharing.
-import { Activity, CircleHelp, Hexagon, Milestone, Moon, NotebookPen, PanelBottom, Scale, Settings2, Sun, Table2 } from 'lucide-react'
+import { Activity, CircleHelp, Hexagon, Layers, Milestone, Moon, NotebookPen, PanelBottom, Scale, Settings2, Sun, Table2 } from 'lucide-react'
 import { cn } from '../lib/cn.ts'
 import { isViewer } from '../lib/viewer.ts'
 import { setMode, setTheme } from '../state/actions.ts'
@@ -14,6 +14,7 @@ type ViewId = UiState['view']
 
 const VIEWS: { id: ViewId; label: string; icon: typeof Hexagon; hint: string; editorOnly?: boolean }[] = [
   { id: 'canvas', label: 'Diagram', icon: Hexagon, hint: 'The diagram' },
+  { id: 'strata', label: 'Levels', icon: Layers, hint: 'The architecture in 3D: its core, the system and every inner level as floating decks' },
   { id: 'split', label: 'Split', icon: PanelBottom, hint: 'The diagram with a table under it' },
   { id: 'tables', label: 'Tables', icon: Table2, hint: 'Services, connectors, endpoints, data, changes and problems as tables, plus a dependency matrix' },
   { id: 'roadmap', label: 'Roadmap', icon: Milestone, hint: 'Planned work by roadmap phase' },

@@ -17,10 +17,7 @@ interface NotesState {
 
 export const useNotes = create<NotesState>(() => ({ index: null, tasks: [], mentions: {}, changed: { path: null, nonce: 0 }, mentioned: [], insert: null }))
 
-/** Node ids a note body mentions (`[@Name](harpoon:node/<id>)`). */
-export function mentionedNodes(body: string): string[] {
-  return [...new Set([...body.matchAll(/\(harpoon:node\/([^)\s]+)\)/g)].map((m) => decodeURIComponent(m[1] ?? '')).filter((x) => x !== ''))]
-}
+export { mentionedNodes } from './mentions.ts'
 
 export async function loadNotes(): Promise<void> {
   const [idx, more] = await Promise.all([invoke('notes.list'), invoke('notes.index')])

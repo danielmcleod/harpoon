@@ -49,8 +49,13 @@ export class CodexExecRun extends CodexRunBase {
   stop(reason: StopReason): Promise<void> {
     this.stoppedBy ??= reason
     this.n.markKilled(KILL_FOR_REASON[reason])
-    if (this.#stopping !== undefined) return this.#stopping
     const child = this.child
+    // Quitting: the tree at once, also when an earlier stop still waits on stdin (the app has a few seconds).
+    if (reason === 'shutdown' && child?.exitInfo() === null) {
+      this.#stopping = stopChild(child, { stdinWaitMs: 0 }).then(() => this.exited.then(() => undefined))
+      return this.#stopping
+    }
+    if (this.#stopping !== undefined) return this.#stopping
     if (child === undefined) {
       this.#stopping = this.exited.then(() => undefined)
       return this.#stopping

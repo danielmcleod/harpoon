@@ -10,6 +10,9 @@ import { KIND_INFO } from '../../shared/model/kinds.ts'
 import { connectorDataClasses, dataClassLabel, dataScope, effectiveTeam, phasesInOrder } from '../../shared/model/governance.ts'
 import { mermaidFlowchart, mermaidSequences } from './formats.ts'
 
+/** Text for a table cell: a "|" would end the cell, a line break the row. */
+const cell = (s: string): string => s.replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' ')
+
 const ev = (n: { evidence: { path: string; lines: [number, number] | null }[] }): string =>
   n.evidence.map((e) => `\`${e.path}${e.lines !== null ? `:${e.lines[0]}` : ''}\``).join(', ')
 
@@ -35,7 +38,7 @@ function nodeSection(m: Model, n: HxNode, depth: number): string[] {
     out.push('| Feature | Protocol | Endpoint | SLA |', '|---|---|---|---|')
     for (const f of n.features) {
       const sla = f.sla === null ? '' : [f.sla.p50Ms !== null ? `p50 ${f.sla.p50Ms}ms` : '', f.sla.p99Ms !== null ? `p99 ${f.sla.p99Ms}ms` : '', f.sla.maxRps !== null ? `${f.sla.maxRps} rps` : ''].filter(Boolean).join(', ')
-      out.push(`| ${f.name}${f.status !== 'existing' ? ` *(${f.status})*` : ''} | ${f.protocol ?? ''} | ${f.endpoint !== null ? `\`${f.endpoint.replace(/\|/g, '\\|')}\`` : ''} | ${sla} |`)
+      out.push(`| ${cell(f.name)}${f.status !== 'existing' ? ` *(${f.status})*` : ''} | ${cell(f.protocol ?? '')} | ${f.endpoint !== null ? `\`${cell(f.endpoint)}\`` : ''} | ${sla} |`)
     }
     out.push('')
     for (const f of n.features) {
@@ -64,7 +67,7 @@ export function architectureMarkdown(m: Model, decisions: readonly DecisionRecor
   out.push('## Connections', '', '| From | To | Protocol | Return | Auth | Mode |', '|---|---|---|---|---|---|')
   for (const c of Object.values(m.connectors)) {
     const name = (id: string): string => [...ancestorsOf(m, id).reverse().map((a) => a.name), m.nodes[id]?.name ?? id].join(' › ')
-    out.push(`| ${name(c.source)} | ${name(c.target)} | ${c.channelA.protocol} | ${c.channelB?.protocol ?? ''} | ${c.channelA.auth ?? ''} | ${c.sync}${c.status !== 'existing' ? ` (${c.status})` : ''} |`)
+    out.push(`| ${cell(name(c.source))} | ${cell(name(c.target))} | ${cell(c.channelA.protocol)} | ${cell(c.channelB?.protocol ?? '')} | ${cell(c.channelA.auth ?? '')} | ${c.sync}${c.status !== 'existing' ? ` (${c.status})` : ''} |`)
   }
   out.push('')
   out.push(...governanceSections(m))
@@ -94,7 +97,7 @@ export function governanceSections(m: Model): string[] {
     out.push('## Ownership', '', '| Team | Contact | Owns |', '|---|---|---|')
     for (const t of m.meta.teams) {
       const owned = nodes.filter((n) => n.team === t.id).map((n) => n.name)
-      out.push(`| ${t.name} | ${t.contact ?? ''} | ${owned.join(', ')} |`)
+      out.push(`| ${cell(t.name)} | ${cell(t.contact ?? '')} | ${cell(owned.join(', '))} |`)
     }
     out.push('')
   }
@@ -108,7 +111,7 @@ export function governanceSections(m: Model): string[] {
       const byCls = scope.get(n.id)
       if (byCls === undefined) continue
       const how = [...byCls].map(([cls, r]) => `${label(cls)}: ${r.own ? 'stores/processes' : r.via.length > 0 ? 'receives or sends' : 'inside'}`).join('; ')
-      out.push(`| ${n.name} | ${[...byCls.keys()].map(label).join(', ')} | ${how} |`)
+      out.push(`| ${cell(n.name)} | ${cell([...byCls.keys()].map(label).join(', '))} | ${cell(how)} |`)
     }
     out.push('')
     if (carrying.length > 0) {

@@ -96,16 +96,22 @@ export function applySeed(draft: Draft, seed: Seed, runId: string, repoId: strin
 
   let links = 0
   const seen = new Set(Object.values(m.connectors).map((c) => `${c.source}->${c.target}`))
+  // `source-target`, numbered when taken: by an existing connector, or by another link of this seed (`a` → `b-c`
+  // and `a-b` → `c` read the same).
+  const ids = new Set(Object.keys(m.connectors))
   for (const l of seed.links) {
     const source = idOf.get(l.from)
     const target = idOf.get(l.to)
     if (source === undefined || target === undefined || source === target || seen.has(`${source}->${target}`)) continue
     seen.add(`${source}->${target}`)
     links++
+    let id = `${source}-${target}`.slice(0, 80)
+    for (let i = 2; ids.has(id); i++) id = `${`${source}-${target}`.slice(0, 74)}-${i}`
+    ids.add(id)
     ops.push({
       op: 'addConnector',
       connector: ConnectorZ.parse({
-        id: `${source}-${target}`.slice(0, 80),
+        id,
         source,
         target,
         duplex: !l.async,
@@ -128,7 +134,7 @@ export function applySeed(draft: Draft, seed: Seed, runId: string, repoId: strin
   }
   for (const [ns, nodeIds] of namespaces) {
     const id = `ns-${slugify(ns)}`
-    if (m.boundaries[id] !== undefined) continue
+    if (Object.hasOwn(m.boundaries, id)) continue
     ops.push({ op: 'addBoundary', boundary: BoundaryZ.parse({ id, name: ns, type: 'k8s-namespace', nodeIds }) })
   }
 

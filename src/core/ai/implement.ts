@@ -5,10 +5,11 @@ import { implementationBrief } from '../export/docs.ts'
 import { KIND_INFO } from '../../shared/model/kinds.ts'
 import { ancestorsOf } from '../../shared/model/queries.ts'
 import type { Model } from '../../shared/model/schema.ts'
+import { own } from './draft.ts'
 
 /** A node and its links, in a few lines (where it sits, what it is, what it talks to). */
 function describeNode(m: Model, id: string): string | null {
-  const n = m.nodes[id]
+  const n = own(m.nodes, id)
   if (n === undefined) return null
   const path = [...ancestorsOf(m, id).reverse().map((a) => a.name), n.name].join(' › ')
   const out = [`- **${path}** (${KIND_INFO[n.kind].label.toLowerCase()}${n.techStack !== null ? `, ${n.techStack}` : ''}, ${n.status})${n.description.trim() !== '' ? `: ${n.description.trim().split('\n')[0]}` : ''}`]

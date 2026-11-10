@@ -21,10 +21,11 @@ import { NODE_KINDS } from '@shared/model/schema.ts'
 import type { NodeKind } from '@shared/model/schema.ts'
 import { cancelConnect, completeConnect, edit, focus, select, startConnect, toggleExpanded } from '../state/actions.ts'
 import { setUi, useStore } from '../state/store.ts'
-import { useShortcut } from '../lib/keys.ts'
+import { KEYS, useShortcut } from '../lib/keys.ts'
+import { glide } from '../lib/motion.ts'
 import { cn } from '../lib/cn.ts'
 import { nodeBox } from './box.ts'
-import { buildFlow } from './build.ts'
+import { buildFlow, reuseFlow } from './build.ts'
 import { ContainerNode } from './ContainerNode.tsx'
 import { cellAt, containerAt, moveOps, newConnectorOps, newNodeOps } from './edits.ts'
 import { HarpoonEdge } from './HarpoonEdge.tsx'
@@ -94,9 +95,11 @@ function CanvasInner({ overlays, children }: { overlays?: CanvasOverlays; childr
   const editable = mode === 'edit' && overlays?.diff == null && review === null && roadmap === null
   const rf = useReactFlow<AnyNode>()
   useEffect(() => {
-    registerCamera({ get: () => rf.getViewport(), set: (c, duration) => void rf.setViewport(c, { duration }) })
+    registerCamera({ get: () => rf.getViewport(), set: (c, duration) => void rf.setViewport(c, { duration: glide(duration) }) })
     return () => registerCamera(null)
   }, [rf])
+  // F: fit the diagram in view (a single key, so only while the canvas has focus).
+  useShortcut(KEYS.fit, () => void rf.fitView({ padding: 0.15, duration: glide(300) }), { scope: 'canvas', description: 'Fit the diagram in view' })
 
   const built = useMemo(() => {
     const sel = (k: 'node' | 'connector' | 'boundary'): Set<string> => new Set(selection?.kind === k ? selection.ids : [])
@@ -119,9 +122,14 @@ function CanvasInner({ overlays, children }: { overlays?: CanvasOverlays; childr
     })
   }, [model, scene, style, editable, selection, highlight, overlays, review, roadmap, impact, lens, haMarks])
 
-  // Local copy so dragging moves nodes smoothly; replaced whenever the scene changes.
+  // Local copy so dragging moves nodes smoothly; replaced whenever the scene changes. What a rebuild left as it was
+  // keeps its object, so selecting one node re-renders that node and not the whole diagram.
   const [nodes, setNodes] = useState<AnyNode[]>(built.nodes)
-  useEffect(() => setNodes(built.nodes), [built.nodes])
+  const [edges, setEdges] = useState(built.edges)
+  useEffect(() => {
+    setNodes((prev) => reuseFlow(prev, built.nodes))
+    setEdges((prev) => reuseFlow(prev, built.edges))
+  }, [built])
 
   const onNodesChange = useCallback((changes: NodeChange<AnyNode>[]) => {
     // Selection is ours (store); only positions and sizes flow back into the local copy.
@@ -144,7 +152,7 @@ function CanvasInner({ overlays, children }: { overlays?: CanvasOverlays; childr
     if (!pendingFit.current) return
     const t = setTimeout(() => {
       pendingFit.current = false
-      void rf.fitView({ padding: 0.15, duration: 300, maxZoom: 1.2 })
+      void rf.fitView({ padding: 0.15, duration: glide(300), maxZoom: 1.2 })
     }, 80)
     return () => clearTimeout(t)
   }, [nodes, fitNonce, rf])
@@ -156,7 +164,7 @@ function CanvasInner({ overlays, children }: { overlays?: CanvasOverlays; childr
     const d = n.data as HexFlowNode['data']
     const box = nodeBox(d.r, d.style, d.expanded)
     const p = n.internals.positionAbsolute
-    void rf.setCenter(p.x + box.center.x, p.y + box.center.y, { zoom: Math.max(rf.getZoom(), 0.9), duration: 350 })
+    void rf.setCenter(p.x + box.center.x, p.y + box.center.y, { zoom: Math.max(rf.getZoom(), 0.9), duration: glide(350) })
   }, [centerReq, rf])
 
   const centerOfNode = useCallback(
@@ -188,7 +196,8 @@ function CanvasInner({ overlays, children }: { overlays?: CanvasOverlays; childr
         return c === null ? [] : [{ id: d.id, center: c }]
       })
       const ops = moveOps(model, scene, moves)
-      if (!edit(ops, { label: moves.length > 1 ? `move ${moves.length} nodes` : 'move' })) setNodes(built.nodes)
+      // Nothing moved to another cell (or the move did not fit): back to where the model has them.
+      if (!edit(ops, { label: moves.length > 1 ? `move ${moves.length} nodes` : 'move' })) setNodes((prev) => reuseFlow(prev, built.nodes))
     },
     [model, scene, centerOfNode, built.nodes],
   )
@@ -234,10 +243,32 @@ function CanvasInner({ overlays, children }: { overlays?: CanvasOverlays; childr
   )
 
   return (
-    <div data-key-scope="canvas" className={cn('@container relative h-full w-full bg-canvas', connectMode && 'hx-connecting')} onDragOver={(e) => editable && e.dataTransfer.types.includes(KIND_MIME) && e.preventDefault()} onDrop={onDrop}>
+    <div
+      data-key-scope="canvas"
+      className={cn('@container relative h-full w-full bg-canvas', connectMode && 'hx-connecting')}
+      onDragOver={(e) => editable && e.dataTransfer.types.includes(KIND_MIME) && e.preventDefault()}
+      onDrop={onDrop}
+      onKeyDown={(e) => {
+        // Enter or Space on a focused node or line selects it, as a click does (selection is the store's, so React
+        // Flow's own keyboard handling is off: its arrow keys would only move a node on screen, never in the model).
+        if ((e.key !== 'Enter' && e.key !== ' ') || e.ctrlKey || e.metaKey || e.altKey) return
+        const el = e.target as Element
+        const id = el.getAttribute('data-id')
+        if (id === null) return
+        if (el.classList.contains('react-flow__node') && !id.startsWith('zone:')) {
+          e.preventDefault()
+          select({ kind: 'node', ids: [id] })
+        } else if (el.classList.contains('react-flow__edge')) {
+          const ids = edges.find((x) => x.id === id)?.data?.connectors.map((c) => c.id) ?? []
+          if (ids.length === 0) return
+          e.preventDefault()
+          select({ kind: 'connector', ids })
+        }
+      }}
+    >
       <ReactFlow<AnyNode>
         nodes={nodes}
-        edges={built.edges}
+        edges={edges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
@@ -285,6 +316,7 @@ function CanvasInner({ overlays, children }: { overlays?: CanvasOverlays; childr
         elementsSelectable
         selectNodesOnDrag={false}
         deleteKeyCode={null}
+        disableKeyboardA11y
         multiSelectionKeyCode={null}
         selectionKeyCode={null}
         zoomOnDoubleClick={false}

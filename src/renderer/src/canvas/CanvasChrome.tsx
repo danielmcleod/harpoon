@@ -2,14 +2,16 @@
 // small parts into the service that uses them), Tidy, the blast-radius banner, and a legend of line styles.
 import { RoadmapBar } from './RoadmapBar.tsx'
 import { Panel, useReactFlow } from '@xyflow/react'
-import { Box, Cable, ChevronRight, Expand, Hexagon, Home, LayoutGrid, Minus, Network, Plus, Shrink, Wand2 } from 'lucide-react'
+import { Box, Cable, ChevronRight, Expand, Hexagon, Home, LayoutGrid, Minus, Network, Plus, Shrink, Sparkles, Wand2, X } from 'lucide-react'
 import { cn } from '../lib/cn.ts'
 import { ancestorsOf } from '@shared/model/queries.ts'
 import { Button } from '../components/ui/Button.tsx'
 import { cancelConnect, edit, focus, setNodeStyle, toast } from '../state/actions.ts'
 import { tidyOps } from './edits.ts'
 import { setUi, useStore } from '../state/store.ts'
-import { useModel, useScene } from './useScene.ts'
+import { sceneNow, useModel } from './useScene.ts'
+import { clearHighlight } from '../state/ai.ts'
+import { glide } from '../lib/motion.ts'
 import { ImpactBanner } from './ImpactBanner.tsx'
 import { Lens } from './Lens.tsx'
 
@@ -19,13 +21,13 @@ export function CanvasChrome(): React.JSX.Element {
   const focusId = useStore((s) => s.ui.focusId)
   const connectFrom = useStore((s) => s.ui.connectFrom)
   const editable = useStore((s) => s.ui.mode === 'edit')
-  const scene = useScene(model)
   const expandedCount = useStore((s) => Object.keys(s.ui.expanded).length)
   // The simulator's transport bar takes the bottom centre: keep the corners compact.
   const sim = useStore((s) => s.ui.mode === 'sim')
   const nodeStyle = useStore((s) => s.prefs.nodeStyle)
   const detail = useStore((s) => s.ui.detail)
   const overview = detail === 'overview'
+  const pointed = useStore((s) => s.ai.highlight?.nodeIds.length ?? 0)
   const crumbs = focusId === null ? [] : [...ancestorsOf(model, focusId).reverse(), model.nodes[focusId]].filter((n) => n !== undefined)
 
   const expandAll = (): void => {
@@ -50,6 +52,13 @@ export function CanvasChrome(): React.JSX.Element {
             </span>
           ))}
         </nav>
+        {pointed > 0 && (
+          <button type="button" onClick={clearHighlight} title="The AI is pointing at these nodes; the rest is dimmed. Click (or Esc) to show everything again." className="mt-1.5 flex w-fit items-center gap-1.5 rounded-lg border border-info/40 bg-popover/95 px-2 py-1 text-xs shadow-sm hover:bg-accent">
+            <Sparkles className="size-3.5 text-info" />
+            AI highlight: {pointed} node{pointed === 1 ? '' : 's'}
+            <X className="size-3 text-muted-foreground" />
+          </button>
+        )}
       </Panel>
 
       {connectFrom !== null && (
@@ -72,13 +81,13 @@ export function CanvasChrome(): React.JSX.Element {
 
       <Panel position="bottom-left">
         <div className="flex items-center gap-0.5 rounded-lg border bg-popover/90 p-1 shadow-sm backdrop-blur">
-          <Button variant="ghost" size="icon" className="size-7" aria-label="Zoom out" onClick={() => void rf.zoomOut({ duration: 150 })}>
+          <Button variant="ghost" size="icon" className="size-7" aria-label="Zoom out" onClick={() => void rf.zoomOut({ duration: glide(150) })}>
             <Minus />
           </Button>
-          <Button variant="ghost" size="icon" className="size-7" aria-label="Zoom in" onClick={() => void rf.zoomIn({ duration: 150 })}>
+          <Button variant="ghost" size="icon" className="size-7" aria-label="Zoom in" onClick={() => void rf.zoomIn({ duration: glide(150) })}>
             <Plus />
           </Button>
-          <Button variant="ghost" size="icon" className="size-7" aria-label="Fit view" title="Fit view" onClick={() => void rf.fitView({ padding: 0.15, duration: 300 })}>
+          <Button variant="ghost" size="icon" className="size-7" aria-label="Fit view" title="Fit view" onClick={() => void rf.fitView({ padding: 0.15, duration: glide(300) })}>
             <Expand />
           </Button>
           <span className="mx-0.5 h-4 w-px bg-border" />
@@ -109,7 +118,7 @@ export function CanvasChrome(): React.JSX.Element {
               icon={<Wand2 />}
               title="Arrange what is on screen: callers left, callees right, shorter lines that stop crossing or running through nodes, containers at their drawn size (undoable)"
               onClick={() => {
-                const ops = tidyOps(model, scene)
+                const ops = tidyOps(model, sceneNow(model))
                 if (ops.length === 0) toast('Already tidy.')
                 else if (edit(ops, { label: 'tidy layout' })) toast(`Tidied ${ops.length} node${ops.length === 1 ? '' : 's'}. Undo to put them back.`)
               }}

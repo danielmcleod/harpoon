@@ -1,14 +1,14 @@
 // Electron main entry. Before ready: app:// scheme → home → userData under HARPOON_HOME → AUMID → single-instance
 // lock → createCore. On ready: hardening, renderer files, menu, theme, push, IPC router, window.
 import { createReadStream } from 'node:fs'
-import { readFile, stat, writeFile } from 'node:fs/promises'
+import { readFile, realpath, stat, writeFile } from 'node:fs/promises'
 import { confined } from '@core/project/confine.ts'
 import { listCollection } from '@core/project/collections.ts'
 import type { ExportView } from '@shared/ipc.ts'
 import { bundleEntries } from '@core/export/bundle.ts'
 import { zip } from '@core/export/zip.ts'
 import { buildViewerHtml } from './viewer.ts'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { app, dialog, nativeTheme, protocol, shell } from 'electron'
 import { attachBundle, canEncrypt, notionExport, notionToken, setNotionToken } from './notion.ts'
@@ -22,7 +22,7 @@ import { homePaths, resolveHome } from '@core/home.ts'
 import { createLogger } from '@core/log.ts'
 import type { Logger } from '@core/log.ts'
 import { parseRequest } from '@shared/ipc-schemas.ts'
-import type { AppInfo, Platform } from '@shared/ipc.ts'
+import type { AppInfo, AppState, Platform } from '@shared/ipc.ts'
 import { IPC_PROTOCOL } from '@shared/ipc.ts'
 import { APP_ID, QUIT_BUDGET_MS } from './constants.ts'
 import { registerCommandIpc } from './ipc.ts'
@@ -33,7 +33,7 @@ import { createRouter } from './router.ts'
 import type { MainHandlers } from './router.ts'
 import { installHardening } from './security.ts'
 import { ThemeController, backgroundFor } from './theme.ts'
-import { allowedExternalUrl, rendererTarget } from './urls.ts'
+import { allowedExternalUrl, isMacPackage, isUnderAny, rendererTarget } from './urls.ts'
 import type { RendererTarget } from './urls.ts'
 import { createMainWindow, revealWindow } from './window.ts'
 
@@ -118,6 +118,26 @@ function onReady(core: Core, log: Logger): void {
   const saveDialog = (opts: SaveDialogOptions): Promise<SaveDialogReturnValue> =>
     mainWindow !== null ? dialog.showSaveDialog(mainWindow, opts) : dialog.showSaveDialog(opts)
 
+  /** Folders the window may ask the OS to open: the project, its repositories, its runs' folders, the designs folder. */
+  const openableRoots = async (): Promise<string[]> => {
+    const session = core.projects.session
+    const repos = session === null ? null : await core.invoke('repo.resolve', undefined)
+    return [
+      core.state.state.designsDir,
+      ...(session !== null ? [session.root] : []),
+      ...(repos?.ok === true ? (repos.value as { path: string | null }[]).flatMap((r) => (r.path !== null ? [r.path] : [])) : []),
+      ...core.ai.list().flatMap((r) => (r.build !== null ? [r.build.cwd, r.build.repoPath] : [])),
+    ]
+      .filter((p) => p !== '')
+      .map((p) => resolve(p))
+  }
+
+  /**
+   * App state as the window gets it: without the outside agents' token. Settings shows that from mcp.external.get,
+   * and only while outside agents are on.
+   */
+  const stateForWindow = (s: AppState): AppState => ({ ...s, externalMcp: { ...s.externalMcp, token: null } })
+
   const main: MainHandlers = {
     'app.info': () => Promise.resolve(appInfo(core)),
     'dialog.pickFile': async (req) => {
@@ -154,16 +174,30 @@ function onReady(core: Core, log: Logger): void {
         await shell.openExternal(url)
         return
       }
-      if (req.target === 'file') {
-        // Files are only ever shown in their folder: opening one would let the OS run it.
-        shell.showItemInFolder(req.path)
+      if (req.target === 'home') {
+        const err = await shell.openPath(core.paths.home)
+        if (err !== '') throw new HarpoonError('NOT_FOUND', err)
         return
       }
-      const path = req.target === 'home' ? core.paths.home : req.path
-      // Folders only: a "folder" that is really a file (a script, a shortcut) is never handed to the shell.
-      const st = await stat(path).catch(() => null)
-      if (st === null || !st.isDirectory()) throw new HarpoonError('NOT_FOUND', 'That folder does not exist.')
-      const err = await shell.openPath(path)
+      // Only what the window already works with (the project, its repositories, a run's folder), checked by name
+      // before anything on disk is touched: another path (a server's, on Windows) is not even looked at.
+      const path = resolve(req.path)
+      const roots = await openableRoots()
+      const refused = new HarpoonError('FORBIDDEN', 'Only the project’s own folders can be opened from here.')
+      if (!isUnderAny(path, roots)) throw refused
+      if (req.target === 'file') {
+        // Files are only ever shown in their folder: opening one would let the OS run it.
+        shell.showItemInFolder(path)
+        return
+      }
+      // Folders only, and where they really are: a "folder" that is really a file (a script, a shortcut), a link
+      // that leads elsewhere or a macOS application (a folder that opens by running) is never handed to the shell.
+      const real = await realpath(path).catch(() => null)
+      const st = real === null ? null : await stat(real).catch(() => null)
+      if (real === null || st === null || !st.isDirectory()) throw new HarpoonError('NOT_FOUND', 'That folder does not exist.')
+      const realRoots = await Promise.all(roots.map((r) => realpath(r).catch(() => '')))
+      if (!isUnderAny(real, realRoots) || isMacPackage(path) || isMacPackage(real)) throw refused
+      const err = await shell.openPath(real)
       if (err !== '') throw new HarpoonError('NOT_FOUND', err)
     },
     'evidence.reveal': async (req) => {
@@ -226,11 +260,11 @@ function onReady(core: Core, log: Logger): void {
     'notion.setToken': (req) => setNotionToken(core, req.token),
     'notion.tokenStatus': async () => ({ hasToken: (await notionToken(core)) !== null, canEncrypt: canEncrypt() }),
     'notion.attachBundle': async (req) => attachBundle(core, req.view, await viewerHtml(req.view).catch(() => null)),
-    'state.get': () => Promise.resolve(core.state.state),
+    'state.get': () => Promise.resolve(stateForWindow(core.state.state)),
     'state.set': async (req) => {
       const next = await core.state.patch(req)
       if (req.theme !== undefined) theme.set(req.theme)
-      return next
+      return stateForWindow(next)
     },
   }
 

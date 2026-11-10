@@ -6,7 +6,7 @@
 // children or connectors is refused: use `removeNodeOps` to cascade.
 import { z } from 'zod'
 import { deepEqual } from './equal.ts'
-import { descendantIds, isSelfOrAncestor } from './queries.ts'
+import { depthOf, descendantIds, isSelfOrAncestor } from './queries.ts'
 import {
   BoundaryPatchZ,
   BoundaryZ,
@@ -91,6 +91,11 @@ export interface ApplyResult {
   inverse: Op[]
 }
 
+/** The record's own entry: an id such as "constructor" is not there just because every object has one. */
+function own<T>(r: Record<string, T>, id: string): T | undefined {
+  return Object.hasOwn(r, id) ? r[id] : undefined
+}
+
 /** Values of `obj` for the keys of `patch` (the inverse patch). */
 function previous<T extends object, P extends { [K in keyof T]?: T[K] }>(obj: T, patch: P): P {
   const out: Record<string, unknown> = {}
@@ -123,18 +128,18 @@ export function applyOps(input: Model, ops: readonly Op[]): ApplyResult {
     switch (o.op) {
       case 'addNode': {
         const n = o.node
-        if (m.nodes[n.id] !== undefined) fail(`a node "${n.id}" already exists`)
-        if (n.parentId !== null && m.nodes[n.parentId] === undefined) fail(`parent "${n.parentId}" not found`)
+        if (own(m.nodes, n.id) !== undefined) fail(`a node "${n.id}" already exists`)
+        if (n.parentId !== null && own(m.nodes, n.parentId) === undefined) fail(`parent "${n.parentId}" not found`)
         m.nodes[n.id] = n
         if (o.at !== null) m.layout[n.id] = o.at
         inv.push({ op: 'removeNode', id: n.id })
         break
       }
       case 'updateNode': {
-        const cur = m.nodes[o.id] ?? fail(`node "${o.id}" not found`)
+        const cur = own(m.nodes, o.id) ?? fail(`node "${o.id}" not found`)
         const parent = o.patch.parentId
         if (parent !== undefined && parent !== cur.parentId && parent !== null) {
-          if (m.nodes[parent] === undefined) fail(`parent "${parent}" not found`)
+          if (own(m.nodes, parent) === undefined) fail(`parent "${parent}" not found`)
           if (isSelfOrAncestor(m, o.id, parent)) fail(`"${o.id}" cannot move inside itself`)
         }
         m.nodes[o.id] = merge(cur, o.patch)
@@ -142,13 +147,13 @@ export function applyOps(input: Model, ops: readonly Op[]): ApplyResult {
         break
       }
       case 'removeNode': {
-        const cur = m.nodes[o.id] ?? fail(`node "${o.id}" not found`)
+        const cur = own(m.nodes, o.id) ?? fail(`node "${o.id}" not found`)
         if (Object.values(m.nodes).some((n) => n.parentId === o.id)) fail(`"${o.id}" still has children`)
         if (Object.values(m.connectors).some((c) => c.source === o.id || c.target === o.id)) {
           fail(`"${o.id}" still has connectors`)
         }
         // Inverse order matters: the node comes back first, then its boundary memberships.
-        inv.push({ op: 'addNode', node: cur, at: m.layout[o.id] ?? null })
+        inv.push({ op: 'addNode', node: cur, at: own(m.layout, o.id) ?? null })
         for (const b of Object.values(m.boundaries)) {
           if (!b.nodeIds.includes(o.id)) continue
           m.boundaries[b.id] = { ...b, nodeIds: b.nodeIds.filter((x) => x !== o.id) }
@@ -161,26 +166,26 @@ export function applyOps(input: Model, ops: readonly Op[]): ApplyResult {
       }
       case 'addConnector': {
         const c = o.connector
-        if (m.connectors[c.id] !== undefined) fail(`a connector "${c.id}" already exists`)
-        if (m.nodes[c.source] === undefined) fail(`source "${c.source}" not found`)
-        if (m.nodes[c.target] === undefined) fail(`target "${c.target}" not found`)
+        if (own(m.connectors, c.id) !== undefined) fail(`a connector "${c.id}" already exists`)
+        if (own(m.nodes, c.source) === undefined) fail(`source "${c.source}" not found`)
+        if (own(m.nodes, c.target) === undefined) fail(`target "${c.target}" not found`)
         if (c.source === c.target) fail('a connector needs two different nodes')
         m.connectors[c.id] = c
         inv.push({ op: 'removeConnector', id: c.id })
         break
       }
       case 'updateConnector': {
-        const cur = m.connectors[o.id] ?? fail(`connector "${o.id}" not found`)
+        const cur = own(m.connectors, o.id) ?? fail(`connector "${o.id}" not found`)
         const next = merge(cur, o.patch)
-        if (m.nodes[next.source] === undefined) fail(`source "${next.source}" not found`)
-        if (m.nodes[next.target] === undefined) fail(`target "${next.target}" not found`)
+        if (own(m.nodes, next.source) === undefined) fail(`source "${next.source}" not found`)
+        if (own(m.nodes, next.target) === undefined) fail(`target "${next.target}" not found`)
         if (next.source === next.target) fail('a connector needs two different nodes')
         m.connectors[o.id] = next
         inv.push({ op: 'updateConnector', id: o.id, patch: previous(cur, o.patch) })
         break
       }
       case 'removeConnector': {
-        const cur = m.connectors[o.id] ?? fail(`connector "${o.id}" not found`)
+        const cur = own(m.connectors, o.id) ?? fail(`connector "${o.id}" not found`)
         inv.push({ op: 'addConnector', connector: cur })
         for (const f of Object.values(m.flows)) {
           if (!f.steps.some((s) => s.connectorId === o.id)) continue
@@ -193,45 +198,45 @@ export function applyOps(input: Model, ops: readonly Op[]): ApplyResult {
       }
       case 'addBoundary': {
         const b = o.boundary
-        if (m.boundaries[b.id] !== undefined) fail(`a boundary "${b.id}" already exists`)
-        if (b.parentId !== null && m.nodes[b.parentId] === undefined) fail(`parent "${b.parentId}" not found`)
+        if (own(m.boundaries, b.id) !== undefined) fail(`a boundary "${b.id}" already exists`)
+        if (b.parentId !== null && own(m.nodes, b.parentId) === undefined) fail(`parent "${b.parentId}" not found`)
         m.boundaries[b.id] = b
         inv.push({ op: 'removeBoundary', id: b.id })
         break
       }
       case 'updateBoundary': {
-        const cur = m.boundaries[o.id] ?? fail(`boundary "${o.id}" not found`)
+        const cur = own(m.boundaries, o.id) ?? fail(`boundary "${o.id}" not found`)
         m.boundaries[o.id] = merge(cur, o.patch)
         inv.push({ op: 'updateBoundary', id: o.id, patch: previous(cur, o.patch) })
         break
       }
       case 'removeBoundary': {
-        const cur = m.boundaries[o.id] ?? fail(`boundary "${o.id}" not found`)
+        const cur = own(m.boundaries, o.id) ?? fail(`boundary "${o.id}" not found`)
         delete m.boundaries[o.id]
         inv.push({ op: 'addBoundary', boundary: cur })
         break
       }
       case 'addFlow': {
-        if (m.flows[o.flow.id] !== undefined) fail(`a flow "${o.flow.id}" already exists`)
+        if (own(m.flows, o.flow.id) !== undefined) fail(`a flow "${o.flow.id}" already exists`)
         m.flows[o.flow.id] = o.flow
         inv.push({ op: 'removeFlow', id: o.flow.id })
         break
       }
       case 'updateFlow': {
-        const cur = m.flows[o.id] ?? fail(`flow "${o.id}" not found`)
+        const cur = own(m.flows, o.id) ?? fail(`flow "${o.id}" not found`)
         m.flows[o.id] = merge(cur, o.patch)
         inv.push({ op: 'updateFlow', id: o.id, patch: previous(cur, o.patch) })
         break
       }
       case 'removeFlow': {
-        const cur = m.flows[o.id] ?? fail(`flow "${o.id}" not found`)
+        const cur = own(m.flows, o.id) ?? fail(`flow "${o.id}" not found`)
         delete m.flows[o.id]
         inv.push({ op: 'addFlow', flow: cur })
         break
       }
       case 'setLayout': {
-        if (m.nodes[o.id] === undefined) fail(`node "${o.id}" not found`)
-        const prev = m.layout[o.id] ?? null
+        if (own(m.nodes, o.id) === undefined) fail(`node "${o.id}" not found`)
+        const prev = own(m.layout, o.id) ?? null
         if (o.at === null) delete m.layout[o.id]
         else m.layout[o.id] = o.at
         inv.push({ op: 'setLayout', id: o.id, at: prev })
@@ -252,7 +257,7 @@ export function applyOps(input: Model, ops: readonly Op[]): ApplyResult {
 
 /** The ops that remove a node with everything inside it and every connector touching that subtree. */
 export function removeNodeOps(m: Model, id: string): Op[] {
-  if (m.nodes[id] === undefined) return []
+  if (own(m.nodes, id) === undefined) return []
   const subtree = new Set([id, ...descendantIds(m, id)])
   const ops: Op[] = []
   for (const c of Object.values(m.connectors)) {
@@ -262,16 +267,7 @@ export function removeNodeOps(m: Model, id: string): Op[] {
     if (b.parentId !== null && subtree.has(b.parentId)) ops.push({ op: 'removeBoundary', id: b.id })
   }
   // Deepest first, so every node is childless when it goes.
-  const depth = (n: string): number => {
-    let d = 0
-    let cur = m.nodes[n]?.parentId ?? null
-    while (cur !== null) {
-      d++
-      cur = m.nodes[cur]?.parentId ?? null
-    }
-    return d
-  }
-  for (const n of [...subtree].sort((a, b) => depth(b) - depth(a))) ops.push({ op: 'removeNode', id: n })
+  for (const n of [...subtree].sort((a, b) => depthOf(m, b) - depthOf(m, a))) ops.push({ op: 'removeNode', id: n })
   return ops
 }
 

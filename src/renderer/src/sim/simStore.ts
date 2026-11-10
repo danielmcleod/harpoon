@@ -30,6 +30,13 @@ export const useSim = create<SimState>(() => ({
 let engine: Simulator | null = null
 let engineModel: Model | null = null
 
+/** Another project (or none): stop, and drop the scenario, the recording and the trace with the engine. */
+export function resetSimState(): void {
+  engine = null
+  engineModel = null
+  useSim.setState(useSim.getInitialState(), true)
+}
+
 export function resetSim(model: Model | null): void {
   engine = model === null ? null : new Simulator(model)
   engineModel = model

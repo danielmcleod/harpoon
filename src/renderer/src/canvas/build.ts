@@ -5,6 +5,7 @@ import type { HexStyle } from '@shared/geometry/hex.ts'
 import type { ChangeSummary } from '@shared/model/diff.ts'
 import { ancestorsOf, pathLabel } from '@shared/model/queries.ts'
 import { BoundaryZ } from '@shared/model/schema.ts'
+import { KIND_INFO } from '@shared/model/kinds.ts'
 import type { LensMark } from './lensMarks.ts'
 import type { NodeMark } from './overlays.ts'
 import type { Model } from '@shared/model/schema.ts'
@@ -112,6 +113,7 @@ export function buildFlow(i: BuildInput): { nodes: (HexFlowNode | ZoneFlowNode)[
       width: box.width,
       height: box.height,
       selected: i.selectedNodes.has(id),
+      ariaLabel: `${n.name}, ${KIND_INFO[n.kind].label.toLowerCase()}${n.status !== 'existing' ? `, ${n.status}` : ''}${sn.ghost ? ', outside this view' : ''}`,
       draggable: i.editable && !sn.ghost,
       connectable: i.editable && !sn.ghost,
       zIndex: sn.expanded ? sn.depth * 2 : sn.depth * 2 + 1,
@@ -156,6 +158,15 @@ export function buildFlow(i: BuildInput): { nodes: (HexFlowNode | ZoneFlowNode)[
     const ids = e.connectors.map((c) => c.id)
     const diff = ids.map((c) => connDiff.get(c)).find((k) => k !== undefined) ?? null
     const health = ids.map((c) => i.edgeHealth?.get(c)).find((h) => h !== undefined) ?? null
+    const data = {
+      connectors: e.connectors,
+      dim: i.highlight !== null && !(i.highlight.has(e.source) && i.highlight.has(e.target)),
+      diff,
+      emphasis: i.emphasisConnectors !== null && ids.some((c) => i.emphasisConnectors?.has(c) === true),
+      badgeT: badgeT.get(e.key) ?? 0.5,
+      health,
+      reciprocal: e.reciprocal,
+    }
     return {
       id: e.key,
       type: 'harpoon',
@@ -164,18 +175,44 @@ export function buildFlow(i: BuildInput): { nodes: (HexFlowNode | ZoneFlowNode)[
       sourceHandle: 'c',
       targetHandle: 'c',
       selected: ids.some((c) => i.selectedConnectors.has(c)),
+      ariaLabel: `${m.nodes[e.source]?.name ?? e.source} to ${m.nodes[e.target]?.name ?? e.target}, ${badgeText(data)}`,
       zIndex: 5,
-      data: {
-        connectors: e.connectors,
-        dim: i.highlight !== null && !(i.highlight.has(e.source) && i.highlight.has(e.target)),
-        diff,
-        emphasis: i.emphasisConnectors !== null && ids.some((c) => i.emphasisConnectors?.has(c) === true),
-        badgeT: badgeT.get(e.key) ?? 0.5,
-        health,
-        reciprocal: e.reciprocal,
-      },
+      data,
     }
   })
 
   return { nodes: [...zones, ...nodes], edges }
+}
+
+/** Equal by value to a small depth (a node, its data, a mark or a point inside it); the same object is always equal. */
+function same(a: unknown, b: unknown, depth: number): boolean {
+  if (Object.is(a, b)) return true
+  if (depth === 0 || typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, k) => same(x, b[k], depth - 1))
+  }
+  const x = a as Record<string, unknown>
+  const y = b as Record<string, unknown>
+  const keys = Object.keys(x)
+  return keys.length === Object.keys(y).length && keys.every((k) => k in y && same(x[k], y[k], depth - 1))
+}
+
+/** What React Flow adds to a node it was given (never set by the build). */
+const ADDED = new Set(['measured', 'dragging', 'resizing'])
+
+/**
+ * A rebuild makes every node and edge anew, though a click or a search letter changes one or two. This keeps the
+ * previous object where nothing about it changed, and its `data` where only something beside it did (`selected`),
+ * so React Flow and the memoized node and edge components skip the rest.
+ */
+export function reuseFlow<T extends { id: string; data?: unknown }>(prev: readonly T[], next: readonly T[]): T[] {
+  const old = new Map(prev.map((p) => [p.id, p as Record<string, unknown>]))
+  return next.map((n) => {
+    const p = old.get(n.id)
+    if (p === undefined) return n
+    const fresh = n as Record<string, unknown>
+    if (!same(p['data'], fresh['data'], 4)) return n
+    const rest = Object.keys(fresh).every((k) => k === 'data' || same(p[k], fresh[k], 1)) && Object.keys(p).every((k) => k in fresh || ADDED.has(k))
+    return rest ? (p as T) : { ...n, data: p['data'] }
+  })
 }

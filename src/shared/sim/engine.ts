@@ -7,10 +7,14 @@
 //  2. Propagation along routes (paths.ts) in dependency order: connectors carry calls = handled × fan-out (retries
 //     amplify calls by the callee's error rate; open circuit breakers and partitions stop calls), and the hierarchy
 //     carries the rest (into a container's receiving parts, up from a part with no calls to its service's calls).
+//     Handled is what the caller's unit had capacity for: nothing while it is down, and its served share as of the
+//     last tick when it is overloaded (the same feedback delay as error rates), so a bottleneck shields what is
+//     behind it.
 //  3. Each service unit (a node with capacity, or the nearest ancestor that has one, else kind defaults) gets
-//     utilization, queueing latency (base / (1 − ρ), capped) and drops when overloaded.
+//     utilization, queueing latency (base / (1 − ρ), capped) and drops when overloaded. A fault on a node hits the
+//     unit that serves it and every unit inside it.
 //  4. Errors flow back up synchronous links (a caller fails when a dependency it waits on fails or times out).
-//  5. Async links into a slower consumer pile up as backlog on the broker.
+//  5. Async links into a slower consumer pile up as backlog on the broker, one backlog per consumer.
 import { ancestorsOf } from '../model/queries.ts'
 import { resilienceOf } from '../model/resilience.ts'
 import type { HxNode, Model, NodeKind } from '../model/schema.ts'
@@ -185,20 +189,48 @@ export class Simulator {
   readonly #order: Route[]
   readonly #unit = new Map<string, string>()
   readonly #params = new Map<string, UnitParams>()
+  /** Messages waiting on a broker for each consumer link (by connector id). */
   readonly #backlog = new Map<string, number>()
-  readonly #breaker = new Map<string, { bad: number; openUntil: number }>()
+  /** `probing`: half-open, letting calls through to see whether the callee is back. */
+  readonly #breaker = new Map<string, { bad: number; openUntil: number; probing: boolean }>()
+  /** Node ids whose faults hit a unit: the nodes it serves and the containers it sits in. */
+  readonly #hits = new Map<string, Set<string>>()
+  /** Where a request goes on synchronously from each node (for end-to-end latency). */
+  readonly #syncOut = new Map<string, string[]>()
+  /** Share of its load each unit had capacity for last tick (absent: all of it). */
+  #served = new Map<string, number>()
   #prev: Frame | null = null
   #t = 0
 
   constructor(m: Model) {
     this.#m = m
     this.#order = orderRoutes(m)
+    const hit = (u: string, id: string): void => {
+      const set = this.#hits.get(u)
+      if (set === undefined) this.#hits.set(u, new Set([id]))
+      else set.add(id)
+    }
     for (const n of Object.values(m.nodes)) {
       const u = unitOf(m, n.id)
       this.#unit.set(n.id, u)
+      hit(u, n.id)
       const un = m.nodes[u]
-      if (un !== undefined && !this.#params.has(u)) this.#params.set(u, paramsOf(un))
+      if (un !== undefined && !this.#params.has(u)) {
+        this.#params.set(u, paramsOf(un))
+        for (const a of ancestorsOf(m, u)) hit(u, a.id)
+      }
     }
+    for (const r of this.#order) {
+      if (r.connector !== undefined && r.connector.sync !== 'sync') continue
+      const list = this.#syncOut.get(r.from)
+      if (list === undefined) this.#syncOut.set(r.from, [r.to])
+      else list.push(r.to)
+    }
+  }
+
+  /** A fault on node `target` hits unit `u`: the unit serves that node, or sits inside it. */
+  #hit(u: string, target: string): boolean {
+    return target === u || this.#hits.get(u)?.has(target) === true
   }
 
   /** Share of a unit's capacity left under instance, zone and region faults (resilience as documented). */
@@ -206,7 +238,7 @@ export class Simulator {
     const r = resilienceOf(this.#m, u)
     let left = 1
     for (const f of active) {
-      if (f.type === 'instance' && f.target === u) {
+      if (f.type === 'instance' && this.#hit(u, f.target)) {
         const n = r?.instances ?? (r?.deployment === 'multi-instance' || r?.deployment === 'multi-zone' || r?.deployment === 'multi-region' ? 2 : 1)
         left *= n <= 1 ? 0 : (n - 1) / n
       } else if (f.type === 'zone' && r !== null && r.zones.includes(f.target)) {
@@ -228,7 +260,24 @@ export class Simulator {
     const m = this.#m
     const t = this.#t
     const active = sc.faults.filter((f) => t >= f.from && (f.until === null || t < f.until))
-    const fault = (type: FaultType, target: string): Fault | undefined => active.find((f) => f.type === type && f.target === target)
+    const cutOff = (connectorId: string): boolean => active.some((f) => f.type === 'partition' && f.target === connectorId)
+    const fault = (type: FaultType, u: string): Fault | undefined => active.find((f) => f.type === type && this.#hit(u, f.target))
+    const unit = (id: string): string => this.#unit.get(id) ?? id
+    // What each unit can serve this tick: its capacity under a rate limit and what instance, zone and region faults
+    // leave of it, and whether it is down.
+    const states = new Map<string, { capacity: number; down: boolean }>()
+    const stateOf = (u: string): { capacity: number; down: boolean } => {
+      let s = states.get(u)
+      if (s === undefined) {
+        let capacity = (this.#params.get(u) ?? KIND_DEFAULTS.service).capacity
+        const rl = fault('ratelimit', u)
+        if (rl !== undefined) capacity = Math.min(capacity, rl.value)
+        const left = this.#survives(u, active)
+        capacity *= left
+        states.set(u, (s = { capacity, down: fault('down', u) !== undefined || left <= 0 }))
+      }
+      return s
+    }
 
     // Last tick's error rates and latencies drive this tick's retries, timeouts and breakers (feedback delay).
     const prev = this.#prev
@@ -240,8 +289,14 @@ export class Simulator {
     const unitLoad = new Map<string, number>()
     const add = (id: string, rps: number, from: string | null = null): void => {
       arrivals.set(id, (arrivals.get(id) ?? 0) + rps)
-      const u = this.#unit.get(id) ?? id
-      if (from === null || (this.#unit.get(from) ?? from) !== u) unitLoad.set(u, (unitLoad.get(u) ?? 0) + rps)
+      const u = unit(id)
+      if (from === null || unit(from) !== u) unitLoad.set(u, (unitLoad.get(u) ?? 0) + rps)
+    }
+    // What goes on from a node: all of it inside one unit (the same request), else only what its unit handled.
+    const leaving = (from: string, to: string): number => {
+      const u = unit(from)
+      const share = u === unit(to) ? 1 : stateOf(u).down ? 0 : (this.#served.get(u) ?? 1)
+      return (arrivals.get(from) ?? 0) * share
     }
     const factor = profileFactor(sc.profile, t) * sc.multiplier
     // Entry load; clients without explicit load still generate a little, so a fresh diagram animates.
@@ -249,52 +304,62 @@ export class Simulator {
     for (const id of entries) add(id, (m.nodes[id]?.sim?.entryRps ?? 100) * factor)
 
     const edges: Record<string, EdgeFrame> = {}
+    const waiting = new Map<string, number>()
     for (const r of this.#order) {
       const c = r.connector
       if (c === undefined) {
         // The hierarchy: the same request moves into an inner part or up to its service's calls.
-        add(r.to, (arrivals.get(r.from) ?? 0) * r.share, r.from)
+        add(r.to, leaving(r.from, r.to) * r.share, r.from)
         continue
       }
-      const handled = arrivals.get(c.source) ?? 0
-      let rps = handled * (c.sim?.fanout ?? 1)
-      const br = this.#breaker.get(c.id) ?? { bad: 0, openUntil: -1 }
+      let rps = leaving(c.source, c.target) * (c.sim?.fanout ?? 1)
+      const br = this.#breaker.get(c.id) ?? { bad: 0, openUntil: -1, probing: false }
       const open = c.policies.circuitBreaker && t < br.openUntil
-      const cut = fault('partition', c.id) !== undefined
+      const cut = cutOff(c.id)
       const calleeErr = nodeErr(c.target)
       // Retries (synchronous links only) multiply load on a failing callee: the retry storm.
       if (c.sync === 'sync' && (c.policies.retries ?? 0) > 0 && !open) rps *= 1 + (c.policies.retries ?? 0) * Math.min(1, calleeErr)
       const timedOut = c.policies.timeoutMs !== null && nodeLat(c.target) > c.policies.timeoutMs
       let err = cut || open ? 1 : timedOut ? 1 : 0
-      // A consumer behind a queue or stream pulls at most its capacity; the rest waits on the broker.
+      // A consumer behind a queue or stream pulls at most what it can take now (nothing while it is down or cut
+      // off, or the broker is down); the rest waits on the broker, each consumer link with its own backlog.
       const src = m.nodes[c.source]
-      if (c.sync === 'async' && src !== undefined && (src.kind === 'queue' || src.kind === 'stream') && !cut) {
-        const cap = this.#params.get(this.#unit.get(c.target) ?? c.target)?.capacity ?? Infinity
-        const queued = this.#backlog.get(c.source) ?? 0
-        const demand = rps + queued / TICK_SEC
+      if (c.sync === 'async' && src !== undefined && (src.kind === 'queue' || src.kind === 'stream')) {
+        const consumer = stateOf(unit(c.target))
+        const cap = cut || open || consumer.down || stateOf(unit(c.source)).down ? 0 : consumer.capacity
+        const demand = rps + (this.#backlog.get(c.id) ?? 0) / TICK_SEC
         const consumed = Math.min(cap, demand)
-        this.#backlog.set(c.source, Math.max(0, (demand - consumed) * TICK_SEC))
+        const left = Math.max(0, (demand - consumed) * TICK_SEC)
+        this.#backlog.set(c.id, left)
+        waiting.set(c.source, (waiting.get(c.source) ?? 0) + left)
         rps = consumed
       }
       if (!cut && !open) add(c.target, rps, c.source)
       if (err === 0) err = Math.min(1, calleeErr)
       edges[c.id] = { rps: cut || open ? 0 : rps, errorRate: err, breakerOpen: open, health: open || cut ? 'bad' : 'ok' }
-      if (c.policies.circuitBreaker) {
-        const bad = err > BREAKER_TRIP ? br.bad + 1 : 0
-        this.#breaker.set(c.id, { bad, openUntil: bad >= BREAKER_TICKS ? t + BREAKER_OPEN_SEC : br.openUntil })
+      if (c.policies.circuitBreaker && !open) {
+        // An open breaker's own refusals do not count against the callee. Once the wait is over it is half-open:
+        // calls go through for a tick, and what comes back (seen a tick later, like every error rate) closes it or
+        // opens it again at once.
+        if (br.probing) {
+          const failed = err > BREAKER_TRIP
+          this.#breaker.set(c.id, { bad: failed ? BREAKER_TICKS : 0, openUntil: failed ? t + BREAKER_OPEN_SEC : -1, probing: false })
+        } else if (br.openUntil >= 0) this.#breaker.set(c.id, { ...br, probing: true })
+        else {
+          const bad = err > BREAKER_TRIP ? br.bad + 1 : 0
+          this.#breaker.set(c.id, { bad, openUntil: bad >= BREAKER_TICKS ? t + BREAKER_OPEN_SEC : -1, probing: false })
+        }
       }
     }
 
+    // A unit that is down shows as down even when nothing reaches it any more.
+    if (active.length > 0) for (const u of this.#params.keys()) if (!unitLoad.has(u) && stateOf(u).down) unitLoad.set(u, 0)
     const unitFrame = new Map<string, { util: number; latency: number; err: number }>()
+    const served = new Map<string, number>()
     for (const [u, load] of unitLoad) {
       const p = this.#params.get(u) ?? KIND_DEFAULTS.service
-      let capacity = p.capacity
-      const rl = fault('ratelimit', u)
-      if (rl !== undefined) capacity = Math.min(capacity, rl.value)
       // Losing an instance, a zone or a region: what is left of the unit's capacity (0: down).
-      const left = this.#survives(u, active)
-      capacity *= left
-      const down = fault('down', u) !== undefined || left <= 0
+      const { capacity, down } = stateOf(u)
       const util = capacity <= 0 ? (load > 0 ? Infinity : 0) : load / capacity
       const slow = fault('latency', u)?.value ?? 1
       const latency = Math.min(p.latencyMs * LATENCY_CAP, p.latencyMs / Math.max(1 / LATENCY_CAP, 1 - Math.min(util, 0.999))) * slow
@@ -302,7 +367,9 @@ export class Simulator {
       const extra = fault('errors', u)?.value ?? 0
       const err = down ? 1 : Math.min(1, 1 - (1 - p.errorRate) * (1 - drop) * (1 - extra))
       unitFrame.set(u, { util: down ? 1.5 : util, latency, err })
+      served.set(u, 1 - drop)
     }
+    this.#served = served
 
     // Errors flow back up synchronous links (reverse dependency order), and async backlog builds on brokers.
     const nodeErrNow = new Map<string, number>()
@@ -333,7 +400,7 @@ export class Simulator {
       const uf = unitFrame.get(u)
       const err = nodeErrNow.get(n.id) ?? 0
       const util = uf?.util ?? 0
-      const backlog = this.#backlog.get(n.id) ?? 0
+      const backlog = waiting.get(n.id) ?? 0
       nodes[n.id] = {
         rps: arrivals.get(n.id) ?? 0,
         util,
@@ -354,25 +421,31 @@ export class Simulator {
       }
     }
 
-    // Totals at entry points: end-to-end latency is approximated by the slowest synchronous chain from each entry.
+    // Totals at entry points: end-to-end latency is approximated by the slowest synchronous chain from each entry,
+    // worked out once per node (a call back into the chain being walked adds nothing).
     let total = 0
     let ok = 0
     let latSum = 0
-    const chain = (id: string, depth: number, seen: Set<string>): number => {
-      if (depth > 12 || seen.has(id)) return 0
-      seen.add(id)
-      const own = nodes[id]?.latencyMs ?? 0
+    const slowest = new Map<string, number>()
+    const walking = new Set<string>()
+    const chain = (id: string): number => {
+      const known = slowest.get(id)
+      if (known !== undefined) return known
+      if (walking.has(id)) return 0
+      walking.add(id)
       let worst = 0
-      for (const r of this.#order) if (r.from === id && (r.connector === undefined || r.connector.sync === 'sync')) worst = Math.max(worst, chain(r.to, depth + 1, seen))
-      seen.delete(id)
-      return own + worst
+      for (const to of this.#syncOut.get(id) ?? []) worst = Math.max(worst, chain(to))
+      walking.delete(id)
+      const sum = (nodes[id]?.latencyMs ?? 0) + worst
+      slowest.set(id, sum)
+      return sum
     }
     for (const id of entries) {
       const rps = arrivals.get(id) ?? 0
       const e = nodes[id]?.errorRate ?? 0
       total += rps
       ok += rps * (1 - e)
-      latSum += rps * chain(id, 0, new Set())
+      latSum += rps * chain(id)
     }
 
     const frame: Frame = {

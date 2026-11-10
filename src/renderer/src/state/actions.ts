@@ -10,6 +10,9 @@ import { call, invoke } from '../ipc/client.ts'
 import { newConnectorOps } from '../canvas/edits.ts'
 import { arrangeLevel } from '@shared/geometry/tidy.ts'
 import { applyTheme } from '../lib/theme.ts'
+import { resetSimState } from '../sim/simStore.ts'
+import { resetTables } from '../tables/tableStore.ts'
+import { sendQueued } from './ai.ts'
 import { INITIAL_AI, INITIAL_UI, getState, setAi, setState, setUi } from './store.ts'
 import type { Mode, Selection } from './store.ts'
 
@@ -73,14 +76,17 @@ export function handleEvents(batch: AppEvent[]): void {
         break
       case 'project-opened':
         adoptProject(e.project)
-        // This project's conversations arrive from the core (kept from earlier sessions); another project's go.
-        setAi({ runs: {}, activeRunId: null, review: null, drafts: {} })
+        // This project's conversations arrive from the core (kept from earlier sessions); another project's go,
+        // with everything that pointed into it (a highlight would otherwise dim the whole new diagram).
+        setAi({ runs: {}, activeRunId: null, review: null, drafts: {}, proposals: {}, highlight: null, excluded: {}, implementing: null, queued: {}, importRepos: null })
         void loadProposals()
         void loadRecords()
         void loadNotes()
         break
       case 'project-closed':
         pending.clear()
+        resetSimState()
+        resetTables()
         setState((s) => ({ project: null, ui: INITIAL_UI, ai: { ...INITIAL_AI, providers: s.ai.providers, vendor: s.ai.vendor, model: s.ai.model, effort: s.ai.effort } }))
         break
       case 'model':
@@ -92,6 +98,7 @@ export function handleEvents(batch: AppEvent[]): void {
         break
       case 'ai-run':
         setAi((ai) => ({ runs: { ...ai.runs, [e.run.id]: e.run } }))
+        sendQueued(e.run)
         break
       case 'ai-text':
         setAi((ai) => {
@@ -126,7 +133,10 @@ export function handleEvents(batch: AppEvent[]): void {
 function adoptProject(p: ProjectView): void {
   pending.clear()
   needsResync = false
-  setState((s) => ({ project: p, ui: { ...INITIAL_UI, leftCollapsed: s.ui.leftCollapsed, rightCollapsed: s.ui.rightCollapsed, fitNonce: s.ui.fitNonce + 1 } }))
+  // The simulator's scenario and the tables' filters and ticked rows belong to the project that was open.
+  resetSimState()
+  resetTables()
+  setState((s) => ({ project: p, save: { status: 'saved', at: null, error: null }, ui: { ...INITIAL_UI, leftCollapsed: s.ui.leftCollapsed, rightCollapsed: s.ui.rightCollapsed, fitNonce: s.ui.fitNonce + 1 } }))
 }
 
 function onModel(e: Extract<AppEvent, { kind: 'model' }>): void {

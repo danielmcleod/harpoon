@@ -6,6 +6,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { DecisionRecord, ExportView, ProjectView, SavedView } from '@shared/ipc.ts'
 import { App } from './app/App.tsx'
+import { ErrorBoundary, installErrorLogging } from './app/ErrorBoundary.tsx'
 import { installMemoryBridge } from './ipc/memoryBridge.ts'
 import { applyTheme } from './lib/theme.ts'
 import { setState, setUi, useStore } from './state/store.ts'
@@ -28,9 +29,12 @@ if (data === null) {
   installMemoryBridge({ project: data.project, readOnly: true, state: { theme: data.view.theme, nodeStyle: data.view.style }, views: data.views, collections: { decisions: data.decisions ?? [] } })
   applyTheme({ theme: data.view.theme, resolved: data.view.theme })
   setState({ theme: { theme: data.view.theme, resolved: data.view.theme } })
+  installErrorLogging()
   createRoot(root).render(
     <StrictMode>
-      <App />
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
     </StrictMode>,
   )
   // Once the project is in: open in Docs mode on the exported view.

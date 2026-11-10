@@ -93,7 +93,7 @@ export function firstPrompt(o: { mode: AiMode; prompt: string; selection: AiSele
 
 /** "Context: …" for what the user selected or is looking inside ('' for nothing). */
 export function scopeLine(sel: AiSelection, m: Model): string {
-  const names = (ids: string[]): string => ids.map((id) => `${m.nodes[id]?.name ?? id} (${id})`).join(', ')
+  const names = (ids: string[]): string => ids.map((id) => `${(Object.hasOwn(m.nodes, id) ? m.nodes[id]?.name : undefined) ?? id} (${id})`).join(', ')
   const scope: string[] = []
   if (sel.focusId !== null) scope.push(`The user is looking inside ${names([sel.focusId])}.`)
   if (sel.nodeIds.length > 0) scope.push(`Selected nodes: ${names(sel.nodeIds.slice(0, 40))}${sel.nodeIds.length > 40 ? ` and ${sel.nodeIds.length - 40} more` : ''}.`)

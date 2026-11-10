@@ -41,8 +41,8 @@ import type { AiMode, Effort } from '../../shared/ipc.ts'
 import { entryNodes, reach, trafficBreaks } from '../../shared/sim/paths.ts'
 import { resilienceFindings } from '../../shared/model/resilience.ts'
 import { redactText } from '../../shared/redact.ts'
-import type { Draft} from './draft.ts';
-import { DraftError } from './draft.ts'
+import type { Draft } from './draft.ts'
+import { DraftError, own } from './draft.ts'
 
 /** What submit_solutions hands back (option keys as given by begin_option). */
 export interface SolutionsSubmit {
@@ -268,7 +268,7 @@ function nodeDetail(m: Model, n: HxNode): Record<string, unknown> {
 function describe(tool: string, a: Record<string, unknown>, r: ToolResult, d: Draft): string {
   const text = r.content[0]?.text ?? ''
   if (r.isError === true) return text.slice(0, 300)
-  const nm = (id: unknown): string => (typeof id === 'string' ? (d.model.nodes[id]?.name ?? id) : '')
+  const nm = (id: unknown): string => (typeof id === 'string' ? (own(d.model.nodes, id)?.name ?? id) : '')
   switch (tool) {
     case 'add_node':
       return `Added ${String(a['name'])}${a['parentId'] !== undefined ? ` inside ${nm(a['parentId'])}` : ''}`
@@ -420,7 +420,7 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
     { description: 'Everything about one node: fields, features with contracts, children, connectors, boundaries.', inputSchema: { id: z.string() }, annotations: ro },
     ({ id }) =>
       guard(() => {
-        const n = d.model.nodes[d.nodeRef(id)]
+        const n = own(d.model.nodes, d.nodeRef(id))
         return n === undefined ? fail(`Unknown node "${id}".`) : ok(nodeDetail(d.model, n))
       }),
   )
@@ -428,7 +428,7 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
   server.registerTool(
     'get_connector',
     { description: 'Everything about one connector: both channels, policies, evidence.', inputSchema: { id: z.string() }, annotations: ro },
-    ({ id }) => guard(() => ok(d.model.connectors[d.connectorRef(id)])),
+    ({ id }) => guard(() => ok(own(d.model.connectors, d.connectorRef(id)))),
   )
 
   server.registerTool(
@@ -580,7 +580,7 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
     (a) =>
       guard(() => {
         const id = d.nodeRef(a.id)
-        const cur = d.model.nodes[id]
+        const cur = own(d.model.nodes, id)
         if (cur === undefined) return fail(`Unknown node "${a.id}".`)
         const locked = new Set(cur.lockedFields)
         const patch: Record<string, unknown> = {}
@@ -732,7 +732,7 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
     (a) =>
       guard(() => {
         const id = d.connectorRef(a.id)
-        const cur = d.model.connectors[id]
+        const cur = own(d.model.connectors, id)
         if (cur === undefined) return fail(`Unknown connector "${a.id}".`)
         const patch: Record<string, unknown> = {}
         if (a.source !== undefined) patch['source'] = d.nodeRef(a.source, 'source')
@@ -803,7 +803,7 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
     (a) =>
       guard(() => {
         const nodeId = d.nodeRef(a.nodeId)
-        const n = d.model.nodes[nodeId]
+        const n = own(d.model.nodes, nodeId)
         if (n === undefined) return fail(`Unknown node "${a.nodeId}".`)
         const { nodeId: _n, ...fin } = a
         const existing = n.features.find((f) => (a.id !== undefined ? f.id === a.id : f.name.toLowerCase() === a.name.toLowerCase()))
@@ -820,7 +820,7 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
     (a) =>
       guard(() => {
         const nodeId = d.nodeRef(a.nodeId)
-        const n = d.model.nodes[nodeId]
+        const n = own(d.model.nodes, nodeId)
         if (n === undefined || !n.features.some((f) => f.id === a.featureId)) return fail('No such feature.')
         stage([{ op: 'updateNode', id: nodeId, patch: { features: n.features.filter((f) => f.id !== a.featureId) } }])
         return ok({ removed: a.featureId })
@@ -848,10 +848,10 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
         const m = d.model
         const gov = governance({ team: a.team })
         const approved = dataClassIds(a.dataClasses)
-        const id = a.id !== undefined && m.boundaries[a.id] !== undefined ? a.id : (a.id ?? a.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''))
+        const id = a.id !== undefined && own(m.boundaries, a.id) !== undefined ? a.id : (a.id ?? a.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''))
         const nodeIds = (a.nodeIds ?? []).map((x) => d.nodeRef(x))
         const parentId = a.parentId === undefined || a.parentId === null || a.parentId === '' ? null : d.nodeRef(a.parentId, 'parent')
-        if (m.boundaries[id] !== undefined) {
+        if (own(m.boundaries, id) !== undefined) {
           stage([
             ...gov.ops,
             {
@@ -892,7 +892,7 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
         const m = d.model
         const steps = a.steps.map((s) => ({ connectorId: d.connectorRef(s.connectorId), direction: s.direction ?? 'A', note: s.note ?? null }))
         const id = a.id ?? a.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
-        if (m.flows[id] !== undefined) {
+        if (own(m.flows, id) !== undefined) {
           stage([{ op: 'updateFlow', id, patch: { name: a.name, steps, ...(a.description !== undefined ? { description: a.description } : {}) } }])
           return ok({ id, updated: true })
         }
@@ -985,7 +985,7 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
         let ha = resilienceFindings(m).filter((f) => f.severity !== 'info')
         if (a.nodeIds !== undefined && a.nodeIds.length > 0) {
           const ids = new Set(a.nodeIds.flatMap((id) => [id, ...descendantIds(m, id)]))
-          const touches = (c: string | undefined): boolean => c !== undefined && (ids.has(m.connectors[c]?.source ?? '') || ids.has(m.connectors[c]?.target ?? ''))
+          const touches = (c: string | undefined): boolean => c !== undefined && (ids.has(own(m.connectors, c)?.source ?? '') || ids.has(own(m.connectors, c)?.target ?? ''))
           problems = problems.filter((p) => (p.nodeId !== undefined && ids.has(p.nodeId)) || touches(p.connectorId))
           ha = ha.filter((f) => (f.nodeId !== null && ids.has(f.nodeId)) || touches(f.connectorId ?? undefined))
         }
@@ -1007,11 +1007,11 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
     (a) =>
       guard(() => {
         const m = d.model
-        const sources = a.from !== undefined && a.from.length > 0 ? a.from.filter((id) => m.nodes[id] !== undefined) : entryNodes(m)
+        const sources = a.from !== undefined && a.from.length > 0 ? a.from.filter((id) => own(m.nodes, id) !== undefined) : entryNodes(m)
         const r = reach(m, sources)
         return ok({
-          from: sources.map((id) => `${m.nodes[id]?.name ?? id} (${id})`),
-          reached: [...r.nodes].map((id) => m.nodes[id]?.name ?? id),
+          from: sources.map((id) => `${own(m.nodes, id)?.name ?? id} (${id})`),
+          reached: [...r.nodes].map((id) => own(m.nodes, id)?.name ?? id),
           stops: trafficBreaks(m, sources).map((b) => ({ kind: b.kind, node: b.nodeId, connector: b.connectorId, message: b.message, fix: b.hint })),
         })
       }),
@@ -1029,9 +1029,11 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
         if (ctx.mode === 'solutions') return fail('In this mode, finish with submit_solutions (all options and the comparison), not submit_proposal.')
         if (ctx.mode === 'decision') return fail('In this mode, finish with draft_decision.')
         d.settlePlacement()
+        // Read before handing over: an outside agent's submit starts a fresh draft at once.
+        const changes = d.summary()
         ctx.onSubmit({ title: a.title, rationale: scrub(a.rationale), risks: scrubOpt(a.risks) })
         ctx.onChange()
-        return ok({ submitted: true, changes: d.summary() })
+        return ok({ submitted: true, changes })
       }),
   )
 
@@ -1071,14 +1073,14 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
         const merge = (list: IssueLink[]): IssueLink[] => (list.some((x) => x.url === link.url) ? list.map((x) => (x.url === link.url ? { ...x, ...link, title: link.title || x.title } : x)) : [...list, link])
         if (a.connectorId !== undefined) {
           const id = d.connectorRef(a.connectorId)
-          const c = d.model.connectors[id]
+          const c = own(d.model.connectors, id)
           if (c === undefined) return fail(`Unknown connector "${a.connectorId}".`)
           stage([{ op: 'updateConnector', id, patch: { issues: merge(c.issues) } }])
           return ok({ linked: link.key, connector: id })
         }
         if (a.nodeId === undefined) return fail('Pass nodeId (and featureId for a feature) or connectorId.')
         const id = d.nodeRef(a.nodeId)
-        const n = d.model.nodes[id]
+        const n = own(d.model.nodes, id)
         if (n === undefined) return fail(`Unknown node "${a.nodeId}".`)
         if (a.featureId !== undefined) {
           if (!n.features.some((f) => f.id === a.featureId)) return fail('No such feature.')

@@ -17,6 +17,15 @@ export const MCP_SERVER_NAME = 'harpoon'
 export const MCP_TOKEN_ENV = 'HARPOON_MCP_TOKEN'
 const MAX_BODY = 4 * 1024 * 1024
 
+/** The run id in a request path ('' when it is not valid percent-encoding: no such route). */
+function routeId(segment: string): string {
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return ''
+  }
+}
+
 export interface McpRoute {
   url: string
   token: string
@@ -31,6 +40,8 @@ interface RouteEntry {
 
 export class McpHost {
   #server: Server | null = null
+  /** The listen under way, shared by everyone who asks meanwhile (two runs starting at once get one server). */
+  #starting: Promise<void> | null = null
   #port = 0
   readonly #routes = new Map<string, RouteEntry>()
   readonly #log: Logger
@@ -53,6 +64,13 @@ export class McpHost {
 
   async #ensure(): Promise<void> {
     if (this.#server !== null) return
+    this.#starting ??= this.#start().finally(() => {
+      this.#starting = null
+    })
+    await this.#starting
+  }
+
+  async #start(): Promise<void> {
     const server = createServer((req, res) => void this.#handle(req, res))
     // A slow or stalled local client cannot hold sockets open.
     server.headersTimeout = 10_000
@@ -70,11 +88,15 @@ export class McpHost {
   async open(runId: string, register: (s: McpServer) => void, onCall?: () => void, fixedToken?: string): Promise<McpRoute> {
     await this.#ensure()
     const token = fixedToken ?? randomBytes(32).toString('base64url')
-    this.#routes.set(runId, { token: Buffer.from(token), register, ...(onCall !== undefined ? { onCall } : {}) })
+    const entry: RouteEntry = { token: Buffer.from(token), register, ...(onCall !== undefined ? { onCall } : {}) }
+    this.#routes.set(runId, entry)
     return {
       url: `http://127.0.0.1:${this.#port}/mcp/${encodeURIComponent(runId)}`,
       token,
-      close: () => this.#routes.delete(runId),
+      // Only this route: a later one opened under the same id (the run's next job) is not this one's to close.
+      close: () => {
+        if (this.#routes.get(runId) === entry) this.#routes.delete(runId)
+      },
     }
   }
 
@@ -88,7 +110,7 @@ export class McpHost {
       if (req.headers.origin !== undefined) return refuse(403, 'forbidden')
       if (req.headers.host !== `127.0.0.1:${this.#port}`) return refuse(403, 'forbidden')
       const m = /^\/mcp\/([^/?#]+)/.exec(req.url ?? '')
-      const route = m?.[1] === undefined ? undefined : this.#routes.get(decodeURIComponent(m[1]))
+      const route = m?.[1] === undefined ? undefined : this.#routes.get(routeId(m[1]))
       const auth = req.headers.authorization ?? ''
       const given = Buffer.from(auth.startsWith('Bearer ') ? auth.slice(7) : '')
       // An unknown run and a wrong token look the same, so a local process cannot tell which runs are live.

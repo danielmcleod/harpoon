@@ -4,6 +4,7 @@ import './styles/index.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './app/App.tsx'
+import { ErrorBoundary, installErrorLogging } from './app/ErrorBoundary.tsx'
 import { applyTheme, readInitialTheme } from './lib/theme.ts'
 import { setState } from './state/store.ts'
 
@@ -20,10 +21,14 @@ setState({ theme: initialTheme })
 window.addEventListener('dragover', (e) => e.preventDefault())
 window.addEventListener('drop', (e) => e.preventDefault())
 
+installErrorLogging()
+
 const root = document.getElementById('root')
 if (root === null) throw new Error('index.html has no #root element')
 createRoot(root).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 )

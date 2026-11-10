@@ -40,6 +40,8 @@ export interface ShortcutOptions {
   reserved?: boolean
   /** Also fire on a held key's auto-repeat (for stepping through a list). Off by default. */
   repeat?: boolean
+  /** Also fire while a dialog is open (the dialog's own keys: closing Help, the palette). Off by default. */
+  inDialogs?: boolean
 }
 
 type Handler = (e: KeyboardEvent) => void
@@ -53,6 +55,7 @@ interface Registration {
   allowInInputs: boolean
   description: string | undefined
   repeat: boolean
+  inDialogs: boolean
 }
 
 export interface ShortcutInfo {
@@ -145,16 +148,30 @@ function inScope(scope: string, target: EventTarget | null): boolean {
   return false
 }
 
+const DIALOG = '[role="dialog"],[role="alertdialog"]'
+/** A popover is a dialog by role but does not cover the app. */
+const isModal = (el: Element): boolean => el.closest('[data-radix-popper-content-wrapper]') === null
+
+/** A dialog is open over the app: focus is inside one, or one is on screen. */
+function dialogOpen(target: EventTarget | null): boolean {
+  const el = target instanceof Element ? target : document.activeElement
+  const inside = el?.closest(DIALOG) ?? null
+  if (inside !== null) return isModal(inside)
+  return [...document.querySelectorAll(DIALOG)].some(isModal)
+}
+
 function onKeyDown(e: KeyboardEvent): void {
   if (e.defaultPrevented || e.isComposing) return
   const editable = isEditableTarget(e.target)
   // Newest first; a scoped registration beats a global one for the same combo.
   const candidates = registry.filter((r) => matches(r.combo, e))
   if (candidates.length === 0) return
+  // A global shortcut never acts on the app behind an open dialog (Delete would remove the hidden selection).
+  const behind = dialogOpen(e.target)
   const pick =
     candidates.findLast(
       (r) => r.scope !== undefined && inScope(r.scope, e.target) && (!editable || r.allowInInputs),
-    ) ?? candidates.findLast((r) => r.scope === undefined && (!editable || r.allowInInputs))
+    ) ?? candidates.findLast((r) => r.scope === undefined && (!editable || r.allowInInputs) && (!behind || r.inDialogs))
   if (pick === undefined) return
   e.preventDefault()
   // An auto-repeat is not a new decision: a held A would otherwise answer every ask that comes to the front.
@@ -188,6 +205,7 @@ export function registerShortcut(combo: string, handler: Handler, opts: Shortcut
     allowInInputs: single ? false : (opts.allowInInputs ?? true),
     description: opts.description,
     repeat: opts.repeat === true,
+    inDialogs: opts.inDialogs === true,
   }
   registry.push(reg)
   ensureListening()
@@ -216,7 +234,7 @@ export function useShortcut(
   useEffect(() => {
     ref.current = handler
   })
-  const { scope, allowInInputs, description, reserved, repeat, enabled = true } = opts
+  const { scope, allowInInputs, description, reserved, repeat, inDialogs, enabled = true } = opts
   useEffect(() => {
     if (!enabled) return
     return registerShortcut(combo, (e) => ref.current(e), {
@@ -225,8 +243,9 @@ export function useShortcut(
       ...(description !== undefined ? { description } : {}),
       ...(reserved !== undefined ? { reserved } : {}),
       ...(repeat !== undefined ? { repeat } : {}),
+      ...(inDialogs !== undefined ? { inDialogs } : {}),
     })
-  }, [combo, scope, allowInInputs, description, reserved, repeat, enabled])
+  }, [combo, scope, allowInInputs, description, reserved, repeat, inDialogs, enabled])
 }
 
 const KEY_NAMES: Readonly<Record<string, { mac: string; other: string; aria: string }>> = {

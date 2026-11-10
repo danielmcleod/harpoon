@@ -1,5 +1,5 @@
 // AI actions: providers, conversations, proposals and the Diff & Merge review.
-import type { AiContext, AiImplementRequest, AiMode, AiSelection, AiVendor, ResultCode } from '@shared/ipc.ts'
+import type { AiContext, AiImplementRequest, AiMode, AiRunView, AiSelection, AiVendor, ResultCode } from '@shared/ipc.ts'
 import { invoke } from '../ipc/client.ts'
 import { alwaysOn } from '../ai/toolHints.ts'
 import { pickFor, toast } from './actions.ts'
@@ -79,6 +79,28 @@ export async function reply(runId: string, prompt: string, o: { selection?: AiSe
   return r.ok
 }
 
+/** Keep a reply for a conversation that is working; it goes when that conversation's answer finishes. */
+export function queueReply(runId: string, text: string, selection: AiSelection | null): void {
+  setAi((ai) => ({ queued: { ...ai.queued, [runId]: { text, selection } } }))
+}
+
+export function cancelQueued(runId: string): void {
+  setAi((ai) => {
+    if (ai.queued[runId] === undefined) return {}
+    const queued = { ...ai.queued }
+    delete queued[runId]
+    return { queued }
+  })
+}
+
+/** A conversation changed: once it has stopped working its queued reply is sent, to it and no other. */
+export function sendQueued(run: AiRunView): void {
+  const q = getState().ai.queued[run.id]
+  if (q === undefined || run.status === 'running' || run.status === 'starting') return
+  cancelQueued(run.id)
+  void reply(run.id, q.text, q.selection !== null ? { selection: q.selection } : {})
+}
+
 /** Open the panel ready to start a conversation in this mode (the open one stays in history). */
 export function startIn(mode: AiMode): void {
   newConversation()
@@ -133,10 +155,11 @@ export async function removeWorktree(runId: string): Promise<void> {
 export async function deleteConversation(runId: string): Promise<void> {
   const r = await invoke('ai.delete', { runId })
   if (!r.ok) return toast(r.error.message, 'error')
+  cancelQueued(runId)
   setAi((ai) => {
     const runs = { ...ai.runs }
     delete runs[runId]
-    return { runs, ...(ai.activeRunId === runId ? { activeRunId: null, review: null } : {}) }
+    return { runs, ...(ai.activeRunId === runId ? { activeRunId: null, review: null } : {}), ...(ai.highlight?.runId === runId ? { highlight: null } : {}) }
   })
 }
 
@@ -148,6 +171,11 @@ export async function clearHistory(): Promise<void> {
     const runs = Object.fromEntries(Object.entries(ai.runs).filter(([, v]) => v.status === 'running' || v.status === 'starting'))
     return { runs, ...(ai.activeRunId !== null && runs[ai.activeRunId] === undefined ? { activeRunId: null, review: null } : {}) }
   })
+}
+
+/** Stop dimming the diagram around what the AI pointed at. */
+export function clearHighlight(): void {
+  setAi({ highlight: null })
 }
 
 export function newConversation(): void {

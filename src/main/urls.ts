@@ -131,6 +131,27 @@ export function allowedExternalUrl(raw: string, hosts: readonly string[] = EXTER
   return sharedAllowedExternalUrl(raw, hosts)
 }
 
+/** macOS packages: folders the Finder shows as one item and opens by running or installing them. */
+const MAC_PACKAGE =
+  /\.(app|appex|action|bundle|framework|kext|mdimporter|mpkg|pkg|plugin|prefpane|qlgenerator|saver|scptd|service|wdgt|workflow|xpc)$/i
+
+/** A folder that opening would run rather than show: a macOS application or package (`Tool.app`). */
+export function isMacPackage(path: string, platform: NodeJS.Platform = process.platform): boolean {
+  return platform === 'darwin' && MAC_PACKAGE.test(path.replace(/\/+$/, ''))
+}
+
+/**
+ * `path` is one of `roots` or inside one, by name alone (nothing on disk is looked at, so a path that names a
+ * server is never contacted to find out).
+ */
+export function isUnderAny(
+  path: string,
+  roots: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return roots.some((r) => r !== '' && isInsideDir(path, r, platform))
+}
+
 /** Scheme + host of a URL for logs (never the path or query, which may carry data). */
 export function urlForLog(raw: string): string {
   const u = parseUrl(raw)

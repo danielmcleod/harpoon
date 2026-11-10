@@ -1,7 +1,7 @@
 // The renderer's single zustand store: app prefs, the open project's model mirror, and UI state (mode, selection,
 // expanded nodes, focus). Mutations live in actions.ts; components read with selectors.
 import { create } from 'zustand'
-import type { AiMode, AiRunView, AiVendor, AppState, UserTools, Proposal, ProjectView, ProviderView, ThemeState, ToastLevel } from '@shared/ipc.ts'
+import type { AiMode, AiRunView, AiSelection, AiVendor, AppState, UserTools, Proposal, ProjectView, ProviderView, ThemeState, ToastLevel } from '@shared/ipc.ts'
 import type { SceneDetail } from '@shared/geometry/scene.ts'
 import type { Op } from '@shared/model/ops.ts'
 import type { BlastDirection } from '@shared/model/queries.ts'
@@ -44,8 +44,8 @@ export interface UiState {
   connectFrom: string | null
   /** Lens: colour nodes by status, team, data or phase; legend keys in `hidden` dim (null: lens off). */
   lens: { kind: 'status' | 'team' | 'data' | 'phase' | 'resilience'; hidden: string[] } | null
-  /** The diagram, the tables, both (tables under the diagram), or the roadmap board. */
-  view: 'canvas' | 'tables' | 'split' | 'roadmap' | 'decisions' | 'notes'
+  /** The diagram, its levels in 3D, the tables, both (tables under the diagram), or the roadmap board. */
+  view: 'canvas' | 'strata' | 'tables' | 'split' | 'roadmap' | 'decisions' | 'notes'
   /** Notes view: the open note path ('@tasks': open action items; null: none). */
   note: string | null
   /** Decisions view: the comparison or decision record open (null: the list only). */
@@ -90,6 +90,8 @@ export interface AiState {
   excluded: Record<number, true>
   /** The Implement dialog is open for this plan (a conversation's, or a decision's). */
   implementing: { runId?: string; decisionId?: string } | null
+  /** A reply typed while a conversation worked, per run: sent when that run's answer finishes (panel open or not). */
+  queued: Record<string, { text: string; selection: AiSelection | null }>
 }
 
 export interface SaveState {
@@ -126,6 +128,7 @@ export const INITIAL_AI: AiState = {
   review: null,
   excluded: {},
   implementing: null,
+  queued: {},
 }
 
 export const INITIAL_UI: UiState = {

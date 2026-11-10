@@ -3,7 +3,7 @@
 // proc/atomic-lite.ts predates this module and can later delegate here.
 import { randomBytes } from 'node:crypto'
 import * as fsp from 'node:fs/promises'
-import * as fs from 'node:fs'
+import type { Dirent } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { HarpoonError, errnoCode, storageError } from '../errors.ts'
@@ -49,16 +49,16 @@ export const ATOMIC_TEMP_NAME = /^.+\.(\d+)\.[0-9a-f]{8}\.tmp$/
 /**
  * Chaos: remove the temp files of atomic writes a killed process left in `dir` and, `depth` levels down, its
  * folders (never through a link). A temp of this process (`pid`, default process.pid) may be mid-write and is kept;
- * any other belongs to a Harpoon that is gone (call this holding the home lock: one writable Harpoon per home).
- * Returns the paths removed; never throws.
+ * any other belongs to a Harpoon that is gone, or, where two can have the folder open (a project), to one that is
+ * writing right now: `minAgeMs` keeps a temp younger than that. Returns the paths removed; never throws.
  */
 export async function removeStaleTemps(
   dir: string,
-  o: { depth?: number; pid?: number } = {},
+  o: { depth?: number; pid?: number; minAgeMs?: number } = {},
 ): Promise<string[]> {
   const own = String(o.pid ?? process.pid)
   const removed: string[] = []
-  let entries: fs.Dirent[]
+  let entries: Dirent[]
   try {
     entries = await fsp.readdir(dir, { withFileTypes: true })
   } catch {
@@ -74,6 +74,7 @@ export async function removeStaleTemps(
     const m = e.isFile() ? ATOMIC_TEMP_NAME.exec(e.name) : null
     if (m === null || m[1] === own) continue
     try {
+      if (o.minAgeMs !== undefined && Date.now() - (await fsp.stat(p)).mtimeMs < o.minAgeMs) continue
       await fsp.rm(p, { force: true })
       removed.push(p)
     } catch {
@@ -141,51 +142,6 @@ export async function writeJsonAtomic(
   opts: AtomicWriteOptions = {},
 ): Promise<void> {
   await writeFileAtomic(file, `${JSON.stringify(value, null, 2)}\n`, opts)
-}
-
-function sleepSync(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
-}
-
-/**
- * Synchronous variant for best-effort shutdown paths (Windows `session-end`, `process.on('exit')`), same retry
- * policy with blocking waits. Prefer {@link writeFileAtomic} everywhere else.
- */
-export function writeFileAtomicSync(
-  file: string,
-  data: string | Uint8Array,
-  opts: Pick<AtomicWriteOptions, 'mode' | 'dirMode' | 'fsync' | 'retryDelaysMs'> = {},
-): void {
-  const delays = opts.retryDelaysMs ?? ATOMIC_RETRY_DELAYS_MS
-  const tmp = tempPath(file)
-  try {
-    fs.mkdirSync(dirname(file), { recursive: true, mode: opts.dirMode ?? 0o700 })
-    const fd = fs.openSync(tmp, 'w', opts.mode ?? DEFAULT_FILE_MODE)
-    try {
-      fs.writeFileSync(fd, data)
-      if (opts.fsync !== false) fs.fsyncSync(fd)
-    } finally {
-      fs.closeSync(fd)
-    }
-    for (let attempt = 0; ; attempt++) {
-      try {
-        fs.renameSync(tmp, file)
-        return
-      } catch (err) {
-        const code = errnoCode(err)
-        const wait = delays[attempt]
-        if (code === undefined || !RETRYABLE_ERRNO.has(code) || wait === undefined) throw err
-        sleepSync(wait)
-      }
-    }
-  } catch (err) {
-    try {
-      fs.rmSync(tmp, { force: true })
-    } catch {
-      // best effort
-    }
-    throw storageError(`cannot write ${file}`, err)
-  }
 }
 
 export type ReadJsonResult =

@@ -43,12 +43,37 @@ export type Cond =
 
 /**
  * Rule regexes come from shared projects and from the AI, and run on the main thread: short patterns only, and none
- * of the nested-repetition shapes that backtrack exponentially (`(a+)+`, `(a*)*`, `(a|aa)+`).
+ * of the nested-repetition shapes that backtrack exponentially (`(a+)+`, `(a*)*`, `(a|aa)+`), however deep the
+ * repeated part is wrapped in more groups (`((a+))+`, `((a|aa))+`).
  */
 export function unsafePattern(p: string): string | null {
   if (p.length > 200) return 'is longer than 200 characters'
-  if (/\([^)]*[+*}][^)]*\)\s*[+*{]/.test(p)) return 'repeats a group that itself repeats'
-  if (/\([^)]*\|[^)]*\)\s*[+*{]/.test(p)) return 'repeats a group of alternatives'
+  // One entry per open group (the first is the pattern itself): does it hold a repetition or alternatives, at any depth?
+  const open: { repeats: boolean; alternatives: boolean }[] = [{ repeats: false, alternatives: false }]
+  for (let i = 0; i < p.length; i++) {
+    const ch = p[i]
+    const top = open[open.length - 1]
+    if (top === undefined) break
+    if (ch === '\\') i++
+    else if (ch === '[') {
+      // A character class: nothing in it repeats or groups.
+      for (i++; i < p.length && p[i] !== ']'; i++) if (p[i] === '\\') i++
+    } else if (ch === '(') open.push({ repeats: false, alternatives: false })
+    else if (ch === '|') top.alternatives = true
+    else if (ch === '*' || ch === '+' || ch === '{') top.repeats = true
+    else if (ch === ')' && open.length > 1) {
+      open.pop()
+      const outer = open[open.length - 1]
+      const next = p[i + 1]
+      const repeated = next === '*' || next === '+' || next === '{'
+      if (repeated && top.repeats) return 'repeats a group that itself repeats'
+      if (repeated && top.alternatives) return 'repeats a group of alternatives'
+      if (outer !== undefined) {
+        outer.repeats ||= top.repeats
+        outer.alternatives ||= top.alternatives
+      }
+    }
+  }
   if (/\\[1-9]/.test(p)) return 'uses back-references'
   try {
     new RegExp(p)
@@ -301,11 +326,14 @@ function messageFor(m: Model, r: Rule, e: Entity): string {
   const nm = (id: string): string => m.nodes[id]?.name ?? id
   const name = e.kind === 'connector' ? `${nm(e.v.source)} → ${nm(e.v.target)}` : e.v.name
   const tpl = r.message.trim() !== '' ? r.message : `{name} breaks the rule “${r.name}”.`
-  return tpl
-    .replace(/\{name\}/g, name)
-    .replace(/\{kind\}/g, e.kind === 'node' ? e.v.kind : e.kind)
-    .replace(/\{source\}/g, e.kind === 'connector' ? nm(e.v.source) : '')
-    .replace(/\{target\}/g, e.kind === 'connector' ? nm(e.v.target) : '')
+  const values: Record<string, string> = {
+    name,
+    kind: e.kind === 'node' ? e.v.kind : e.kind,
+    source: e.kind === 'connector' ? nm(e.v.source) : '',
+    target: e.kind === 'connector' ? nm(e.v.target) : '',
+  }
+  // One pass with a function: a name is put in as it is ("$&" and "{kind}" in it mean nothing).
+  return tpl.replace(/\{(name|kind|source|target)\}/g, (_, key: string) => values[key] ?? '')
 }
 
 /** Everything the rules flag; `matched` counts the entities each rule applies to (for "11 of 12 follow it"). */

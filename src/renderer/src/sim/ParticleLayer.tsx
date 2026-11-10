@@ -1,6 +1,8 @@
 // Traffic particles: dots moving along each harpoon (requests on channel A, responses back on channel B), drawn on
 // one canvas over the React Flow viewport. Density follows requests per second, speed follows latency, colour
 // follows health. Positions come from the same harpoon geometry as the edges, so dots ride exactly on the lines.
+// The loop only runs while dots move: paused, empty or with reduced motion asked for, it draws once per change (a
+// tick, a pan, a resize) and stops; with reduced motion the dots stand still and still show load and health.
 import { useStore as useFlowStore } from '@xyflow/react'
 import { useEffect, useMemo, useRef } from 'react'
 import { RECIPROCAL_OFFSET, harpoonGeometry, pointAlong } from '@shared/geometry/harpoon.ts'
@@ -8,6 +10,7 @@ import type { HarpoonLine } from '@shared/geometry/harpoon.ts'
 import { ISO_SQUASH } from '@shared/geometry/hex.ts'
 import type { Scene } from '@shared/geometry/scene.ts'
 import { protocolFamily } from '@shared/model/kinds.ts'
+import { reducedMotion } from '../lib/motion.ts'
 import { currentFrame, useSim } from './simStore.ts'
 
 interface Track {
@@ -26,6 +29,8 @@ export function ParticleLayer({ scene }: { scene: Scene }): React.JSX.Element {
   const transform = useFlowStore((s) => s.transform)
   const tRef = useRef(transform)
   tRef.current = transform
+  /** Ask for a frame (set while the layer is mounted). */
+  const kick = useRef<(() => void) | null>(null)
 
   const tracks = useMemo<Track[]>(() => {
     const out: Track[] = []
@@ -54,8 +59,10 @@ export function ParticleLayer({ scene }: { scene: Scene }): React.JSX.Element {
       bad: colorOf('--hx-bad'),
     }
     let raf = 0
+    const still = reducedMotion()
     const start = performance.now()
-    const draw = (now: number): void => {
+    /** Draws one frame; returns whether the dots are moving (so another frame is due). */
+    const draw = (now: number): boolean => {
       const dpr = window.devicePixelRatio || 1
       const w = canvas.clientWidth
       const h = canvas.clientHeight
@@ -70,7 +77,7 @@ export function ParticleLayer({ scene }: { scene: Scene }): React.JSX.Element {
       if (frame !== null) {
         const [tx, ty, zoom] = tRef.current
         // Paused: dots stop where they are; playing: they flow at the simulation speed.
-        const time = sim.playing && sim.cursor === null ? ((now - start) / 1000) * Math.max(0.25, Math.min(sim.speed, 4)) : frame.t
+        const time = still ? 0 : sim.playing && sim.cursor === null ? ((now - start) / 1000) * Math.max(0.25, Math.min(sim.speed, 4)) : frame.t
         const r = Math.max(1.4, Math.min(3.2, 2.4 * zoom))
         for (const tr of tracks) {
           let rps = 0
@@ -102,11 +109,30 @@ export function ParticleLayer({ scene }: { scene: Scene }): React.JSX.Element {
         }
         ctx.shadowBlur = 0
       }
-      raf = requestAnimationFrame(draw)
+      return frame !== null && !still && sim.playing && sim.cursor === null
     }
-    raf = requestAnimationFrame(draw)
-    return () => cancelAnimationFrame(raf)
+    const tick = (now: number): void => {
+      raf = 0
+      if (draw(now)) raf = requestAnimationFrame(tick)
+    }
+    const request = (): void => {
+      if (raf === 0) raf = requestAnimationFrame(tick)
+    }
+    request()
+    kick.current = request
+    // Idle until something changes what is drawn: the simulation (play, a tick, scrubbing) or the canvas size.
+    const off = useSim.subscribe(request)
+    const sized = new ResizeObserver(request)
+    sized.observe(canvas)
+    return () => {
+      cancelAnimationFrame(raf)
+      off()
+      sized.disconnect()
+      kick.current = null
+    }
   }, [tracks])
+  // Panning and zooming move the dots with the lines.
+  useEffect(() => kick.current?.(), [transform])
 
   return <canvas ref={ref} aria-hidden className="pointer-events-none absolute inset-0 z-[4] h-full w-full" />
 }

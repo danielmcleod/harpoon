@@ -6,8 +6,8 @@ import { ancestorsOf, impactOf } from '@shared/model/queries.ts'
 import { failureImpact } from '@shared/model/resilience.ts'
 import type { FailureScope } from '@shared/model/resilience.ts'
 import { emptyModel } from '@shared/model/schema.ts'
-import type { Model } from '@shared/model/schema.ts'
-import { useStore } from '../state/store.ts'
+import type { HxNode, Model } from '@shared/model/schema.ts'
+import { getState, useStore } from '../state/store.ts'
 
 const EMPTY: Model = emptyModel({ id: 'x', name: 'x' })
 
@@ -24,6 +24,17 @@ export function useScene(model: Model): Scene {
     () => computeScene(model, { expanded: new Set(Object.keys(expanded)), focusId, style, detail }),
     [model, expanded, focusId, style, detail],
   )
+}
+
+/** The scene as the canvas draws it right now, for a one-off action (Tidy) that should not recompute it on every edit. */
+export function sceneNow(model: Model): Scene {
+  const s = getState()
+  return computeScene(model, { expanded: new Set(Object.keys(s.ui.expanded)), focusId: s.ui.focusId, style: s.prefs.nodeStyle, detail: s.ui.detail })
+}
+
+/** Whether the search text `q` (trimmed, lower case) finds this node. */
+export function nodeMatches(n: HxNode, q: string): boolean {
+  return [n.name, n.id, n.techStack ?? '', n.vendor ?? '', ...n.tags, ...n.features.map((f) => f.name)].join(' ').toLowerCase().includes(q)
 }
 
 /** Impact analysis of the node in `ui.blast` (what breaks if it fails, what it needs), or null. */
@@ -43,15 +54,14 @@ export function useHighlight(model: Model): ReadonlySet<string> | null {
   const aiHighlight = useStore((s) => s.ai.highlight)
   return useMemo(() => {
     let ids: Set<string> | null = null
-    if (aiHighlight !== null && aiHighlight.nodeIds.length > 0) ids = new Set(aiHighlight.nodeIds.filter((id) => model.nodes[id] !== undefined))
+    // A highlight whose nodes are all gone isolates nothing (it must not dim the whole diagram).
+    const pointed = aiHighlight?.nodeIds.filter((id) => model.nodes[id] !== undefined) ?? []
+    if (pointed.length > 0) ids = new Set(pointed)
     if (blast !== null && model.nodes[blast.id] !== undefined) ids = new Set((blast.failure == null ? impactOf(model, blast.id, blast.dir, blast.hops) : failureMarks(model, blast.id, blast.failure)).keys())
     const q = search.trim().toLowerCase()
     if (q !== '') {
       const hits = new Set<string>()
-      for (const n of Object.values(model.nodes)) {
-        const hay = [n.name, n.id, n.techStack ?? '', n.vendor ?? '', ...n.tags, ...n.features.map((f) => f.name)].join(' ').toLowerCase()
-        if (hay.includes(q)) hits.add(n.id)
-      }
+      for (const n of Object.values(model.nodes)) if (nodeMatches(n, q)) hits.add(n.id)
       ids = ids === null ? hits : new Set([...ids].filter((x) => hits.has(x)))
     }
     if (ids === null) return null

@@ -9,6 +9,9 @@ Code and Codex built in.
   with a single barb, for request and response (`⇌`), and protocol badges.
 - **Drill down**: double-click a service to expand its inner architecture in place, or open it full-canvas, with
   outside dependencies shown as context ghosts. Connectors to inner parts lift to the nearest visible node.
+- **Levels in 3D**: the same architecture as floating decks. A Core deck (the few nodes the system turns around,
+  grouped automatically) sits above the system, and every node's inner parts hang on the deck under it, so nothing
+  is pushed aside. Connectors arc over a deck and rise between levels; orbit, dive into a node, or take the tour.
 - **Document**: every service has a feature catalog (endpoints, contracts, SLAs), connectors have Channel A/B wire
   specs and runtime policies, everything can carry code evidence (`file:line`), and lint flags gaps.
 - **Plan with AI**: Harpoon drives your local `claude` or `codex` CLI (read-only in the project folder) with a live
@@ -76,7 +79,7 @@ Live AI checks (real CLIs, real tokens): `node scripts/ai-smoke.ts claude claude
 | Path | What |
 |---|---|
 | `src/shared/model` | The domain model (zod), ops + undo, diffs, queries, lint, the sample |
-| `src/shared/geometry` | Hex grid, harpoon geometry, the scene (expansion, focus, lifting, boundaries) |
+| `src/shared/geometry` | Hex grid, harpoon geometry, the scene (expansion, focus, lifting, boundaries), the 3D levels layout |
 | `src/shared/sim` | The traffic simulator engine |
 | `src/core` | Electron-free core: projects on disk, AI runner + MCP host + tools, ingest, exports |
 | `src/core/adapters`, `src/core/proc` | Claude Code / Codex CLI adapters, with Harpoon's `design` route |

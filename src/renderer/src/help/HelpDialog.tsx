@@ -28,8 +28,9 @@ export function openHelp(topic: HelpTopic = 'start'): void {
 export function HelpDialog(): React.JSX.Element | null {
   const topic = useStore((s) => s.ui.help)
   const toggle = (): void => setUi((ui) => ({ help: ui.help === null ? 'start' : null }))
-  useShortcut(KEYS.keyboardSheet, () => openHelp('keys'), { description: 'Keyboard shortcuts' })
-  useShortcut('f1', toggle, { description: 'Help' })
+  // Help's own keys work inside it (F1 closes it again).
+  useShortcut(KEYS.keyboardSheet, () => openHelp('keys'), { description: 'Keyboard shortcuts', inDialogs: true })
+  useShortcut('f1', toggle, { description: 'Help', inDialogs: true })
   if (topic === null) return null
   return (
     <Dialog.Root open onOpenChange={(o) => !o && setUi({ help: null })}>
@@ -128,6 +129,7 @@ function Page({ topic }: { topic: HelpTopic }): React.JSX.Element {
       return (
         <List
           items={[
+            <><B>Levels</B> shows the architecture in 3D as floating decks: Core (the few nodes the system turns around, grouped automatically) above the system, and every node&apos;s inner parts on the deck under it. Drag to orbit, Shift-drag to pan, scroll to zoom; double-click a node to go down to its parts, PageUp and PageDown change level, and Tour flies through them all. It is read-only: edit on the diagram.</>,
             <><B>Tables</B> list services, connectors, endpoints, data, changes and problems, plus a dependency matrix. <B>Split</B> shows a table under the diagram.</>,
             <><B>Roadmap</B> groups planned work by phase (set phases in Project settings). Pick a phase to see the diagram as it will be.</>,
             <><B>Decisions</B> compares alternative solutions side by side and keeps a log of decision records. Hover a pending one to drop it (Won&apos;t do keeps it marked rejected; a comparison is abandoned) or delete it, for example a duplicate.</>,
@@ -229,6 +231,9 @@ const SHORTCUTS: { group: string; rows: { keys: string[]; label: string }[] }[] 
   {
     group: 'Anywhere',
     rows: [
+      { keys: [KEYS.palette], label: 'Command palette: jump to a node, switch view, run an action' },
+      { keys: [KEYS.find], label: 'Search (Enter jumps to the next match, Esc clears)' },
+      { keys: [KEYS.open], label: 'Open a folder or repository' },
       { keys: [KEYS.save], label: 'Save' },
       { keys: [KEYS.undo], label: 'Undo' },
       { keys: [KEYS.redo, KEYS.redoAlt], label: 'Redo' },
@@ -242,10 +247,12 @@ const SHORTCUTS: { group: string; rows: { keys: string[]; label: string }[] }[] 
     group: 'Diagram',
     rows: [
       { keys: ['c'], label: 'Connect from the selected node (canvas focused)' },
+      { keys: [KEYS.fit], label: 'Fit the diagram in view (canvas focused)' },
+      { keys: ['enter'], label: 'Select the focused node or line (Tab moves between them)' },
       { keys: [KEYS.focusNode], label: 'Open the selected node on its own' },
       { keys: [KEYS.up], label: 'Delete the selection, or go up a level' },
       { keys: [KEYS.del], label: 'Delete the selection' },
-      { keys: ['escape'], label: 'Cancel connecting, blast radius or search; then clear the selection' },
+      { keys: ['escape'], label: 'Cancel connecting, blast radius, the AI highlight or search; then clear the selection' },
     ],
   },
   {

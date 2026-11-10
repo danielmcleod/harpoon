@@ -39,7 +39,10 @@ export function cellAt(m: Model, scene: Scene, p: Point, parentId: string | null
   return nearestFreeCell(want, (c) => taken.has(coordKey(c)))
 }
 
-/** Ops for nodes dropped at new centres: reparent into whatever container they landed in, then snap to its grid. */
+/**
+ * Ops for nodes dropped at new centres: reparent into whatever container they landed in, then snap to its grid.
+ * A node that lands in the cell and container it was in gets none.
+ */
 export function moveOps(m: Model, scene: Scene, moves: readonly { id: string; center: Point }[]): Op[] {
   const ops: Op[] = []
   const movedIds = new Set(moves.map((x) => x.id))
@@ -57,6 +60,9 @@ export function moveOps(m: Model, scene: Scene, moves: readonly { id: string; ce
     const set = claimed.get(parentId) ?? new Set<string>()
     set.add(coordKey(cell))
     claimed.set(parentId, set)
+    // Dropped where it was (a click that slipped a pixel): no op, so no empty undo step and redo stays.
+    const was = m.layout[mv.id] ?? scene.nodes.get(mv.id)?.cell
+    if (parentId === n.parentId && was !== undefined && was.q === cell.q && was.r === cell.r) continue
     if (parentId !== n.parentId) ops.push({ op: 'updateNode', id: mv.id, patch: { parentId } })
     ops.push({ op: 'setLayout', id: mv.id, at: cell })
   }
