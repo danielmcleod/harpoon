@@ -218,6 +218,22 @@ export interface HistoryState {
   redo?: HistoryEntry[]
 }
 
+/** A commit that changed the project's files (the Time Machine's past). */
+export interface HistoryCommit {
+  sha: string
+  /** Committed at (ms since epoch). */
+  at: number
+  author: string
+  subject: string
+}
+
+export interface ProjectHistory {
+  /** Oldest first. */
+  commits: HistoryCommit[]
+  /** Why there is no history to read (not a git repository, no git), or null. */
+  unavailable: string | null
+}
+
 /** The open project as the renderer receives it. */
 export interface ProjectView {
   /** The folder holding `.harpoon/` (usually a repo root). */
@@ -727,6 +743,9 @@ export interface Commands {
   /** Undo (negative) or redo (positive) several steps at once (the History list). */
   'project.step': { req: { steps: number }; res: { version: number } }
   'project.save': { req: void; res: void }
+  /** The commits that changed this project's files, and the model as it was at one of them (read from git). */
+  'history.list': { req: void; res: ProjectHistory }
+  'history.snapshot': { req: { sha: string }; res: { model: Model; repairs: string[] } }
   'project.recent': { req: void; res: RecentProject[] }
   'project.forgetRecent': { req: { path: string }; res: RecentProject[] }
   /** A new design in the local designs folder: no folder to pick, no repository needed. */
@@ -844,6 +863,8 @@ export const COMMAND_AREA = {
   'project.redo': 'project',
   'project.step': 'project',
   'project.save': 'project',
+  'history.list': 'project',
+  'history.snapshot': 'project',
   'project.recent': 'project',
   'project.forgetRecent': 'project',
   'project.createLocal': 'project',

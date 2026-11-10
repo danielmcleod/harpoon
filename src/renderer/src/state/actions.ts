@@ -12,6 +12,7 @@ import { arrangeLevel } from '@shared/geometry/tidy.ts'
 import { applyTheme } from '../lib/theme.ts'
 import { resetSimState } from '../sim/simStore.ts'
 import { resetTables } from '../tables/tableStore.ts'
+import { resetTime } from '../time/timeStore.ts'
 import { sendQueued } from './ai.ts'
 import { INITIAL_AI, INITIAL_UI, getState, setAi, setState, setUi } from './store.ts'
 import type { Mode, Selection } from './store.ts'
@@ -76,6 +77,7 @@ export function handleEvents(batch: AppEvent[]): void {
         break
       case 'project-opened':
         adoptProject(e.project)
+        resetTime()
         // This project's conversations arrive from the core (kept from earlier sessions); another project's go,
         // with everything that pointed into it (a highlight would otherwise dim the whole new diagram).
         setAi({ runs: {}, activeRunId: null, review: null, drafts: {}, proposals: {}, highlight: null, excluded: {}, implementing: null, queued: {}, importRepos: null })
@@ -87,6 +89,7 @@ export function handleEvents(batch: AppEvent[]): void {
         pending.clear()
         resetSimState()
         resetTables()
+        resetTime()
         setState((s) => ({ project: null, ui: INITIAL_UI, ai: { ...INITIAL_AI, providers: s.ai.providers, vendor: s.ai.vendor, model: s.ai.model, effort: s.ai.effort } }))
         break
       case 'model':

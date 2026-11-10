@@ -118,6 +118,8 @@ export const REQUEST_SCHEMAS = {
   'project.redo': VoidZ,
   'project.step': z.strictObject({ steps: z.number().int().min(-500).max(500) }),
   'project.save': VoidZ,
+  'history.list': VoidZ,
+  'history.snapshot': z.strictObject({ sha: z.string().regex(/^[0-9a-f]{7,40}$/) }),
   'project.recent': VoidZ,
   'project.forgetRecent': z.strictObject({ path: PathZ }),
   'ai.providers': z.strictObject({ force: optional(z.boolean()) }),

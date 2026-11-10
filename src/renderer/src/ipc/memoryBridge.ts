@@ -1,10 +1,11 @@
 // An in-memory window.harpoon: the renderer without Electron. Two uses: development in a plain browser (the sample
 // project, editable) and the exported HTML viewer (the embedded project, read-only).
-import type { AppEvent, AppState, Cmd, HarpoonApi, ProjectView, Result } from '@shared/ipc.ts'
+import type { AppEvent, AppState, Cmd, HarpoonApi, HistoryCommit, ProjectView, Result } from '@shared/ipc.ts'
 import { applyOps } from '@shared/model/ops.ts'
 import type { Op } from '@shared/model/ops.ts'
 import { sampleOps } from '@shared/model/sample.ts'
-import { emptyModel } from '@shared/model/schema.ts'
+import { NodeZ, emptyModel } from '@shared/model/schema.ts'
+import type { Model } from '@shared/model/schema.ts'
 
 export interface MemoryBridgeOptions {
   project: ProjectView
@@ -14,6 +15,25 @@ export interface MemoryBridgeOptions {
   views?: unknown[]
   /** Other collections the viewer embeds (decision records). */
   collections?: Record<string, unknown[]>
+  /** A past to scrub through, oldest first (development only: the app reads the real one from git). */
+  history?: { commit: HistoryCommit; model: Model }[]
+}
+
+/** Dev: a made-up past for the sample, so the Time Machine has something to show without a repository. */
+function sampleHistory(): { commit: HistoryCommit; model: Model }[] {
+  const ops = sampleOps()
+  const legacy: Op = { op: 'addNode', node: NodeZ.parse({ id: 'legacy-billing', name: 'Legacy billing', status: 'deprecated' }), at: { q: 5, r: 4 } }
+  const steps = [
+    { share: 0.3, legacy: true, subject: 'First map of the platform' },
+    { share: 0.55, legacy: true, subject: 'Add payments and its events' },
+    { share: 0.8, legacy: false, subject: 'Retire legacy billing, add notifications' },
+    { share: 1, legacy: false, subject: 'Document the inner parts' },
+  ]
+  const day = 86_400_000
+  return steps.map((s, i) => ({
+    commit: { sha: (i + 1).toString(16).padStart(7, '0'), at: Date.now() - (steps.length - i) * 21 * day, author: 'Sample', subject: s.subject },
+    model: applyOps(emptyModel({ id: 'commerce', name: 'Commerce Platform' }), [...ops.slice(0, Math.ceil(ops.length * s.share)), ...(s.legacy ? [legacy] : [])]).model,
+  }))
 }
 
 /** Dev: the sample project, editable. */
@@ -26,6 +46,7 @@ export function installDevBridge(): void {
       history: { canUndo: false, canRedo: false, undoLabel: null, redoLabel: null },
     },
     readOnly: false,
+    history: sampleHistory(),
   })
 }
 
@@ -100,6 +121,12 @@ export function installMemoryBridge(o: MemoryBridgeOptions): void {
       if (e === undefined || project === null) return { version: project?.version ?? 0 }
       undo.push(e)
       return { version: commit(e.ops) }
+    },
+    'history.list': () => ({ commits: (o.history ?? []).map((h) => h.commit), unavailable: null }),
+    'history.snapshot': (req: { sha: string }) => {
+      const h = o.history?.find((x) => x.commit.sha === req.sha)
+      if (h === undefined) throw new Error('That commit is not available here.')
+      return { model: h.model, repairs: [] }
     },
     'ai.runs': () => [],
     'proposal.list': () => [],

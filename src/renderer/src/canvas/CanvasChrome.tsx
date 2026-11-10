@@ -1,6 +1,6 @@
 // Floating canvas controls: breadcrumbs when a subgraph is focused, zoom controls, the detail level (Overview folds
 // small parts into the service that uses them), Tidy, the blast-radius banner, and a legend of line styles.
-import { RoadmapBar } from './RoadmapBar.tsx'
+import { TimeBar } from '../time/TimeBar.tsx'
 import { Panel, useReactFlow } from '@xyflow/react'
 import { Box, Cable, ChevronRight, Expand, Hexagon, Home, LayoutGrid, Minus, Network, Plus, Shrink, Sparkles, Wand2, X } from 'lucide-react'
 import { cn } from '../lib/cn.ts'
@@ -76,7 +76,12 @@ export function CanvasChrome(): React.JSX.Element {
       )}
 
       <ImpactBanner />
-      {!sim && <RoadmapBar />}
+      {!sim && (
+        // One row above the bottom-left tools and the bottom-right legend, so a narrow canvas never stacks them.
+        <Panel position="bottom-center" style={{ marginBottom: 56 }}>
+          <TimeBar />
+        </Panel>
+      )}
       {!sim && <Lens />}
 
       <Panel position="bottom-left">

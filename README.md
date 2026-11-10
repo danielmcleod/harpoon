@@ -30,6 +30,9 @@ Code and Codex built in.
 - **Tables**: services (a drill-down tree), connectors, endpoints, data handling, planned changes and problems; sort,
   filter, group, edit inline or in bulk, save table views, export CSV/Markdown.
 - **Roadmap**: see the architecture at the end of each phase, drag work between phases on a board, present the roadmap.
+- **Time Machine**: one line of time under the diagram and the 3D levels, from the project's git history through
+  today to the end of each roadmap phase. Drag back through the commits that changed `.harpoon/` to see the
+  architecture as it was, with what each commit added, changed and removed marked; press play for a time-lapse.
 - **Decide**: "Propose solutions" designs 2-4 alternatives in one AI session; compare them side by side (diagrams,
   computed facts, weighted scores), choose one, and keep the decision as an ADR (exported to `docs/adr/`).
 - **Notes**: a project notebook and meeting series in Markdown, with @mentions, tasks carried over between meetings,

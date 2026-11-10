@@ -14,6 +14,7 @@ import { ensureHome, homePaths } from './home.ts'
 import type { HomePaths } from './home.ts'
 import type { Logger } from './log.ts'
 import { ProjectManager } from './project/manager.ts'
+import { listHistory, snapshotAt } from './project/history.ts'
 import { McpHost } from './ai/mcp-host.ts'
 import { ExternalMcp } from './ai/external.ts'
 import { listUserTools } from './ai/user-tools.ts'
@@ -84,6 +85,8 @@ export async function createCore(o: CoreOptions): Promise<Core> {
     'project.redo': () => Promise.resolve(projects.require().redo()),
     'project.step': (r) => Promise.resolve(projects.require().step(r.steps)),
     'project.save': () => projects.require().flush(),
+    'history.list': () => listHistory(projects.require().root),
+    'history.snapshot': (r) => snapshotAt(projects.require().root, r.sha),
     'project.recent': () => Promise.resolve(state.state.recentProjects),
     'project.forgetRecent': (r) => state.forgetRecent(r.path),
     'project.createLocal': (r) => projects.createLocal(r.name, r.template),

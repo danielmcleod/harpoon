@@ -1,7 +1,7 @@
 // The hex canvas (React Flow). The model and view state produce a scene (shared/geometry/scene.ts); the scene becomes
 // React Flow nodes and edges. Dragging, dropping from the palette and drawing connectors turn into ops on drop, so
 // the model stays the only source of truth.
-import { useRoadmap } from './RoadmapBar.tsx'
+import { useProjection } from '../time/timeStore.ts'
 import { dataScope } from '@shared/model/governance.ts'
 import { computeLens } from './lensMarks.ts'
 import { resilienceFindings } from '@shared/model/resilience.ts'
@@ -59,7 +59,7 @@ export function Canvas({ overlays, children }: { overlays?: CanvasOverlays; chil
 function CanvasInner({ overlays, children }: { overlays?: CanvasOverlays; children?: React.ReactNode }): React.JSX.Element {
   const storeModel = useModel()
   const review = useReview()
-  const roadmap = useRoadmap()
+  const roadmap = useProjection()
   // While a change is under review the canvas shows the proposed model (removed things kept, drawn red); with a
   // roadmap phase picked, the architecture at the end of that phase.
   const model = review?.model ?? roadmap?.model ?? storeModel

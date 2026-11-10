@@ -30,9 +30,8 @@ function applyLenient(base: Model, ops: readonly Op[]): { model: Model; skipped:
   return { model, skipped }
 }
 
-/** The proposed model plus the removed nodes/connectors (so they can be drawn struck in red). */
-export function reviewModel(base: Model, ops: readonly Op[]): ReviewView {
-  const { model: after, skipped } = applyLenient(base, ops)
+/** `after`, plus what it no longer has from `base` kept in place (so it can be drawn struck in red), and the changes. */
+export function keepRemoved(base: Model, after: Model): { model: Model; summary: ChangeSummary } {
   const summary = compareModels(base, after)
   const union: Model = {
     ...after,
@@ -54,7 +53,13 @@ export function reviewModel(base: Model, ops: readonly Op[]): ReviewView {
     const k = base.connectors[c.id]
     if (k !== undefined && union.nodes[k.source] !== undefined && union.nodes[k.target] !== undefined) union.connectors[c.id] = k
   }
-  return { model: union, summary, ops: [...ops], skipped }
+  return { model: union, summary }
+}
+
+/** The proposed model plus the removed nodes/connectors (so they can be drawn struck in red). */
+export function reviewModel(base: Model, ops: readonly Op[]): ReviewView {
+  const { model: after, skipped } = applyLenient(base, ops)
+  return { ...keepRemoved(base, after), ops: [...ops], skipped }
 }
 
 export function useReview(): ReviewView | null {

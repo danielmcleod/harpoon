@@ -10,7 +10,6 @@ import { dataScope } from '@shared/model/governance.ts'
 import { KIND_INFO } from '@shared/model/kinds.ts'
 import { DIFF_COLOR, IMPACT_COLOR } from '../canvas/HexNode.tsx'
 import { computeLens } from '../canvas/lensMarks.ts'
-import { useRoadmap } from '../canvas/RoadmapBar.tsx'
 import { useReview } from '../canvas/useReview.ts'
 import { useHighlight, useImpact, useModel } from '../canvas/useScene.ts'
 import { EmptyState } from '../components/ui/EmptyState.tsx'
@@ -19,6 +18,8 @@ import { kindIcon, nodeColor } from '../lib/icons.tsx'
 import { reducedMotion } from '../lib/motion.ts'
 import { select } from '../state/actions.ts'
 import { useStore } from '../state/store.ts'
+import { TimeBar } from '../time/TimeBar.tsx'
+import { useProjection } from '../time/timeStore.ts'
 import { fitDistance } from './camera3d.ts'
 import { StrataEngine } from './engine.ts'
 import type { LabelEls, Live } from './engine.ts'
@@ -35,8 +36,8 @@ function titleOf(n: StrataNode, name: (id: string) => string): string {
 export function StrataView(): React.JSX.Element {
   const storeModel = useModel()
   const review = useReview()
-  const roadmap = useRoadmap()
-  // Like the diagram: a change under review, or the architecture at the end of the picked roadmap phase.
+  const roadmap = useProjection()
+  // Like the diagram: a change under review, or the architecture as of a commit or the end of a roadmap phase.
   const model = review?.model ?? roadmap?.model ?? storeModel
   const layout = useMemo(() => strataLayout(model), [model])
   const highlight = useHighlight(model)
@@ -634,6 +635,9 @@ export function StrataView(): React.JSX.Element {
           {info.hint !== null && <div className="text-[11px] text-primary">{info.hint}</div>}
         </div>
       )}
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2">
+        <TimeBar />
+      </div>
       <div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 text-[11px] whitespace-nowrap text-muted-foreground">
         Drag to orbit · Shift-drag to pan · Scroll to zoom · Double-click a node to go down a level
       </div>
