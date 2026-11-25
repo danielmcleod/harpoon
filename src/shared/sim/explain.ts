@@ -203,6 +203,20 @@ export function failureReport(m: Model, f: Frame): FailureReport {
   return { roots, knockOn }
 }
 
+/** A node's state and why, in a few lines (canvas tooltips); null while it is healthy. */
+export function nodeWhy(m: Model, f: Frame, id: string): string | null {
+  const nf = f.nodes[id]
+  if (nf === undefined || m.nodes[id] === undefined) return null
+  if (nf.forced === true) return `${nodeName(m, id)}: forced healthy\nIt serves everything and passes no failure on.`
+  if (nf.health === 'ok') return null
+  const lines = [`${nodeName(m, id)}: ${nf.health === 'bad' ? 'failing' : 'strained'}, ${pct(nf.errorRate)} errors`]
+  for (const c of nf.causes ?? []) lines.push(`• ${describeNodeCause(m, id, c, f).text}`)
+  if ((nf.causes ?? []).length === 0) lines.push('• No cause recorded')
+  const roots = [...rootsOf(f, id, new Set())].filter((k) => k !== `n:${id}`)
+  if (roots.length > 0) lines.push(`Root cause: ${roots.map((k) => (k.startsWith('c:') ? linkName(m, k.slice(2)) : nodeName(m, k.slice(2)))).join(', ')}`)
+  return lines.join('\n')
+}
+
 /** The report as plain text (for the AI, or copying). */
 export function failureText(m: Model, f: Frame): string {
   const r = failureReport(m, f)

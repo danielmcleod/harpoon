@@ -263,8 +263,8 @@ export const AI_VENDORS = ['claude', 'codex'] as const satisfies readonly AiVend
  * plan: design a change · document: fill in details from code · explain: answer and highlight · import: map a repo ·
  * drift: diagram vs code · solutions: several alternative designs to compare · decision: draft a decision record.
  */
-export type AiMode = 'plan' | 'document' | 'explain' | 'import' | 'drift' | 'solutions' | 'decision' | 'scan' | 'notes' | 'publish' | 'investigate' | 'flows' | 'resilience' | 'resolve' | 'implement' | 'track'
-export const AI_MODES = ['plan', 'document', 'explain', 'import', 'drift', 'solutions', 'decision', 'scan', 'notes', 'publish', 'investigate', 'flows', 'resilience', 'resolve', 'implement', 'track'] as const satisfies readonly AiMode[]
+export type AiMode = 'plan' | 'document' | 'explain' | 'import' | 'drift' | 'solutions' | 'decision' | 'scan' | 'notes' | 'publish' | 'investigate' | 'flows' | 'resilience' | 'resolve' | 'implement' | 'track' | 'heal'
+export const AI_MODES = ['plan', 'document', 'explain', 'import', 'drift', 'solutions', 'decision', 'scan', 'notes', 'publish', 'investigate', 'flows', 'resilience', 'resolve', 'implement', 'track', 'heal'] as const satisfies readonly AiMode[]
 
 /** `.harpoon/publish.json`: where the project is published and what was written. */
 export interface PublishSettings {

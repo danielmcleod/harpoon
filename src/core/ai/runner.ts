@@ -1679,5 +1679,5 @@ The user adds: `
 }
 
 function defaultTitle(mode: AiStartRequest['mode']): string {
-  return mode === 'import' ? 'Import repository' : mode === 'document' ? 'Document' : mode === 'drift' ? 'Sync with code' : mode === 'explain' ? 'Question' : 'Plan'
+  return mode === 'import' ? 'Import repository' : mode === 'document' ? 'Document' : mode === 'drift' ? 'Sync with code' : mode === 'explain' ? 'Question' : mode === 'heal' ? 'Heal' : 'Plan'
 }

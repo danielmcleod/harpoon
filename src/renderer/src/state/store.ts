@@ -19,6 +19,8 @@ export interface Toast {
   id: number
   level: ToastLevel
   message: string
+  /** The action that failed with this error, so the toast can offer to fix it with AI. */
+  failed?: { cmd: string; code: string; issues: { path: string; message: string }[] }
 }
 
 export interface UiState {

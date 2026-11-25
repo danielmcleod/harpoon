@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Simulator } from '../../src/shared/sim/engine.ts'
 import type { Frame, Scenario } from '../../src/shared/sim/engine.ts'
-import { failureReport } from '../../src/shared/sim/explain.ts'
+import { failureReport, nodeWhy } from '../../src/shared/sim/explain.ts'
 import { applyOps } from '../../src/shared/model/ops.ts'
 import { sampleOps } from '../../src/shared/model/sample.ts'
 import { emptyModel } from '../../src/shared/model/schema.ts'
@@ -69,5 +69,14 @@ describe('traffic simulator', () => {
     const g = run({ multiplier: 1, profile: 'constant', faults: [cut], healthy: ['gateway-auth'] }, 5)
     expect(g.edges['gateway-auth']?.health).toBe('ok')
     expect(g.errorRate).toBeLessThan(0.02)
+  })
+
+  it('writes a tooltip for a failing node, none for a healthy one', () => {
+    const f = run({ multiplier: 1, profile: 'constant', faults: [{ id: 'f', type: 'down', target: 'auth-service', value: 0, from: 0, until: null }] }, 5)
+    const why = nodeWhy(model, f, 'api-gateway') ?? ''
+    expect(why).toMatch(/failing/)
+    expect(why).toMatch(/Waits on/)
+    expect(why).toMatch(/Root cause: auth-service/)
+    expect(nodeWhy(model, f, 'stripe')).toBeNull()
   })
 })

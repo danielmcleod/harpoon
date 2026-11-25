@@ -11,6 +11,7 @@ import { kindIcon, nodeColor } from '../lib/icons.tsx'
 import { focus, startConnect, toggleExpanded } from '../state/actions.ts'
 import { Cable, Crosshair, Maximize2, StickyNote } from 'lucide-react'
 import { setUi, useStore } from '../state/store.ts'
+import { simWhy } from '../sim/why.ts'
 import { nodeBox } from './box.ts'
 import { PortHandles } from './PortHandles.tsx'
 import type { HexFlowNode } from './types.ts'
@@ -49,6 +50,12 @@ function HexNodeImpl({ data, selected }: NodeProps<HexFlowNode>): React.JSX.Elem
       className={cn('relative transition-opacity duration-200', dim && 'opacity-25', ghost && 'opacity-55')}
       style={{ width: box.width, height: box.height }}
       data-node-id={n.id}
+      onMouseEnter={(e) => {
+        // In the simulator: why it is strained or failing right now (worked out on hover; it changes every tick).
+        const why = simWhy(n.id)
+        if (why === null) e.currentTarget.removeAttribute('title')
+        else e.currentTarget.title = why
+      }}
     >
       {/* Edges anchor on a hidden centre handle; the drawn geometry comes from the node box, not the handle. */}
       <Handle id="c" type="source" position={Position.Top} className="hx-anchor" style={{ left: box.center.x, top: box.center.y }} isConnectable={false} />

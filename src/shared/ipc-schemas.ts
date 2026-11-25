@@ -10,6 +10,7 @@ import { OpZ } from './model/ops.ts'
 import type { Cmd, CollectionItem, ExportFormat, Req, Result } from './ipc.ts'
 import { COLLECTION_KINDS } from './ipc.ts'
 import type { Op } from './model/ops.ts'
+import type { SceneDetail } from './geometry/scene.ts'
 
 // ---- bounds ---------------------------------------------------------------------------------------------------
 
@@ -48,6 +49,7 @@ const EXPORT_FORMATS = ['harpoon-json', 'interchange-json', 'json-schema', 'merm
 const ExportViewZ = z.strictObject({
   focusId: z.string().max(ID_MAX).nullable(),
   expanded: z.array(z.string().max(ID_MAX)).max(5000),
+  detail: optional(z.enum(['overview', 'full'] as const satisfies readonly SceneDetail[])),
   style: z.enum(NODE_STYLES),
   theme: z.enum(['light', 'dark']),
   includeNotes: z.boolean().default(false),

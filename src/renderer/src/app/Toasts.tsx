@@ -1,7 +1,8 @@
 // Transient messages, bottom-right.
-import { CircleAlert, CircleCheck, Info, X } from 'lucide-react'
+import { CircleAlert, CircleCheck, Info, Sparkles, X } from 'lucide-react'
 import { cn } from '../lib/cn.ts'
 import { dismissToast } from '../state/actions.ts'
+import { canHealWithAi, healWithAi } from '../state/heal.ts'
 import { useStore } from '../state/store.ts'
 
 export function Toasts(): React.JSX.Element {
@@ -26,7 +27,23 @@ export function Toasts(): React.JSX.Element {
                 t.level === 'error' ? 'text-destructive' : t.level === 'warn' ? 'text-warning' : 'text-success',
               )}
             />
-            <span className="min-w-0 flex-1 break-words selectable">{t.message}</span>
+            <span className="min-w-0 flex-1 break-words selectable">
+              {t.message}
+              {t.failed !== undefined && canHealWithAi() && (
+                <button
+                  type="button"
+                  className="mt-1 flex items-center gap-1 text-xs text-primary hover:underline"
+                  onClick={() => {
+                    dismissToast(t.id)
+                    healWithAi(t)
+                  }}
+                  title="The AI finds out why this failed and fixes what is in the project, or says what to do"
+                >
+                  <Sparkles className="size-3" />
+                  Fix with AI
+                </button>
+              )}
+            </span>
             <button
               type="button"
               aria-label="Dismiss"

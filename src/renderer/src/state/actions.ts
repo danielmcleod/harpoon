@@ -6,7 +6,8 @@ import { loadRecords } from '../records/recordsStore.ts'
 import type { AiVendor, AppEvent, AppState, ProjectView, ToastLevel } from '@shared/ipc.ts'
 import { applyOps } from '@shared/model/ops.ts'
 import type { Op } from '@shared/model/ops.ts'
-import { call, invoke } from '../ipc/client.ts'
+import { call, invoke, onHeal, recentFailure } from '../ipc/client.ts'
+import { isCheckIssue, pathText } from '@shared/heal.ts'
 import { newConnectorOps } from '../canvas/edits.ts'
 import { arrangeLevel } from '@shared/geometry/tidy.ts'
 import { applyTheme } from '../lib/theme.ts'
@@ -26,9 +27,18 @@ let needsResync = false
 let toastSeq = 0
 export function toast(message: string, level: ToastLevel = 'info'): void {
   const id = ++toastSeq
-  setState((s) => ({ toasts: [...s.toasts.slice(-4), { id, level, message }] }))
-  setTimeout(() => dismissToast(id), level === 'error' ? 8000 : 4000)
+  // An error from an action that just failed: keep what failed (never the request's values) for "Fix with AI".
+  const f = level === 'error' ? recentFailure(message) : null
+  const failed =
+    f === null || f.cmd.startsWith('ai.')
+      ? undefined
+      : { cmd: f.cmd, code: f.error.code, issues: (Array.isArray(f.error.details) ? f.error.details : []).filter(isCheckIssue).slice(0, 20).map((i) => ({ path: pathText(i.path), message: String(i.message ?? i.code).slice(0, 300) })) }
+  setState((s) => ({ toasts: [...s.toasts.slice(-4), { id, level, message, ...(failed !== undefined ? { failed } : {}) }] }))
+  setTimeout(() => dismissToast(id), level === 'error' ? (failed !== undefined ? 15000 : 8000) : 4000)
 }
+
+// A rejected request that Harpoon repaired and sent again: say what changed (it points at a bug worth reporting).
+onHeal((n) => toast(`Healed ${n.cmd}: ${n.changes.join('; ')}. It went through; the mismatch is a Harpoon bug worth reporting.`, 'warn'))
 
 export function dismissToast(id: number): void {
   setState((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }))
