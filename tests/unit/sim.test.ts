@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Simulator } from '../../src/shared/sim/engine.ts'
 import type { Frame, Scenario } from '../../src/shared/sim/engine.ts'
 import { failureReport, nodeWhy } from '../../src/shared/sim/explain.ts'
+import { failureOnsets } from '../../src/shared/sim/onsets.ts'
 import { applyOps } from '../../src/shared/model/ops.ts'
 import { sampleOps } from '../../src/shared/model/sample.ts'
 import { emptyModel } from '../../src/shared/model/schema.ts'
@@ -78,5 +79,16 @@ describe('traffic simulator', () => {
     expect(why).toMatch(/Waits on/)
     expect(why).toMatch(/Root cause: auth-service/)
     expect(nodeWhy(model, f, 'stripe')).toBeNull()
+  })
+
+  it('marks where things first went bad, and again after a recovery', () => {
+    const sim = new Simulator(model)
+    const sc: Scenario = { multiplier: 1, profile: 'constant', faults: [{ id: 'f', type: 'down', target: 'auth-service', value: 0, from: 5, until: 10 }, { id: 'g', type: 'down', target: 'stripe', value: 0, from: 20, until: null }] }
+    const frames = Array.from({ length: 120 }, () => sim.step(sc))
+    const onsets = failureOnsets(frames)
+    expect(onsets.length).toBe(2)
+    expect(frames[onsets[0] ?? -1]?.t).toBe(5)
+    expect(frames[onsets[1] ?? -1]?.t).toBeGreaterThanOrEqual(20)
+    expect(failureOnsets(frames.slice(0, 40))).toEqual([20])
   })
 })

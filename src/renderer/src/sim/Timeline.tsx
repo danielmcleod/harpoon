@@ -1,8 +1,12 @@
-// The simulator's transport bar (mockup 2): play / pause / step / reset, a scrubber over the recorded frames, the
-// simulated clock, and the speed.
+// The simulator's transport bar (mockup 2): play / pause / step / reset, a scrubber over the recorded frames (marked
+// where things went bad), the simulated clock, and the speed.
 import { Panel } from '@xyflow/react'
 import { FastForward, Pause, Play, RotateCcw, StepForward } from 'lucide-react'
+import { useMemo } from 'react'
+import { failureReport } from '@shared/sim/explain.ts'
+import { failureOnsets } from '@shared/sim/onsets.ts'
 import { Button } from '../components/ui/Button.tsx'
+import { cn } from '../lib/cn.ts'
 import { useStore } from '../state/store.ts'
 import { TICK_SEC, resetSim, stepSim, useSim } from './simStore.ts'
 
@@ -38,18 +42,21 @@ export function Timeline(): React.JSX.Element {
         <Button variant="ghost" size="icon" className="size-8" aria-label="Restart" title="Restart from zero" onClick={() => resetSim(model ?? null)}>
           <RotateCcw />
         </Button>
-        <input
-          type="range"
-          aria-label="Scrub through the recorded simulation"
-          min={0}
-          max={Math.max(0, count - 1)}
-          value={Math.max(0, pos)}
-          onChange={(e) => {
-            const v = Number(e.target.value)
-            useSim.setState({ cursor: v >= count - 1 ? null : v, playing: v >= count - 1 ? playing : false })
-          }}
-          className="min-w-0 flex-1 accent-[var(--primary)]"
-        />
+        <div className="relative flex min-w-0 flex-1 items-center">
+          <FailureMarks />
+          <input
+            type="range"
+            aria-label="Scrub through the recorded simulation"
+            min={0}
+            max={Math.max(0, count - 1)}
+            value={Math.max(0, pos)}
+            onChange={(e) => {
+              const v = Number(e.target.value)
+              useSim.setState({ cursor: v >= count - 1 ? null : v, playing: v >= count - 1 ? playing : false })
+            }}
+            className="min-w-0 flex-1 accent-[var(--primary)]"
+          />
+        </div>
         <span className="w-28 text-right font-mono text-[11px] tabular-nums text-muted-foreground">
           {clock(t)} / {live ? <span className="text-success">Live</span> : clock((count - 1) * TICK_SEC)}
         </span>
@@ -65,5 +72,45 @@ export function Timeline(): React.JSX.Element {
         </label>
       </div>
     </Panel>
+  )
+}
+
+/** The thumb's half-width: marks line up with where the thumb sits at that frame. */
+const THUMB = 8
+
+/**
+ * Marks above the scrubber where things went bad (a node starts failing after a stretch with none): the first one
+ * red and labelled, later ones fainter. Hover says what went wrong; a click jumps there.
+ */
+function FailureMarks(): React.JSX.Element | null {
+  const frames = useSim((s) => s.frames)
+  const onsets = useMemo(() => failureOnsets(frames), [frames])
+  if (frames.length < 2 || onsets.length === 0) return null
+  const last = frames.length - 1
+  const why = (i: number): string => {
+    const f = frames[i]
+    const model = useStore.getState().project?.model
+    const head = `${i === onsets[0] ? 'First went bad' : 'Went bad again'} at ${clock(f?.t ?? 0)}`
+    if (f === undefined || model === undefined) return head
+    const roots = failureReport(model, f).roots.filter((r) => r.health === 'bad')
+    return [head, ...roots.slice(0, 5).map((r) => `• ${r.name}: ${r.reasons[0]?.text ?? 'failing'}`), ...(roots.length > 5 ? [`…and ${roots.length - 5} more`] : [])].join('\n')
+  }
+  return (
+    <>
+      {onsets.map((i, k) => (
+        <button
+          key={i}
+          type="button"
+          aria-label={k === 0 ? `First went bad at ${clock(frames[i]?.t ?? 0)}` : `Went bad again at ${clock(frames[i]?.t ?? 0)}`}
+          onMouseEnter={(e) => (e.currentTarget.title = why(i))}
+          onClick={() => useSim.setState({ cursor: i >= last ? null : i, playing: false })}
+          className="pointer-events-none absolute -top-3.5 z-10 flex -translate-x-1/2 flex-col items-center"
+          style={{ left: `calc(${THUMB}px + (100% - ${THUMB * 2}px) * ${i / last})` }}
+        >
+          {k === 0 && <span className="pointer-events-auto mb-0.5 rounded bg-destructive px-1 text-[9px] leading-[13px] font-semibold whitespace-nowrap text-white">First went bad</span>}
+          <span className={cn('pointer-events-auto w-0.5 rounded-full', k === 0 ? 'h-3 bg-destructive' : 'h-2.5 bg-destructive/60')} />
+        </button>
+      ))}
+    </>
   )
 }
