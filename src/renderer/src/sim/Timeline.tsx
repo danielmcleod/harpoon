@@ -1,7 +1,8 @@
 // The simulator's transport bar (mockup 2): play / pause / step / reset, a scrubber over the recorded frames (marked
-// where things went bad), the simulated clock, and the speed.
+// where things went bad), the simulated clock, the traffic load (how much is sent, in rps) and the playback speed
+// (how fast simulated time runs; it does not change the load).
 import { Panel } from '@xyflow/react'
-import { FastForward, Pause, Play, RotateCcw, StepForward } from 'lucide-react'
+import { FastForward, Gauge, Minus, Pause, Play, Plus, RotateCcw, StepForward } from 'lucide-react'
 import { useMemo } from 'react'
 import { failureReport } from '@shared/sim/explain.ts'
 import { failureOnsets } from '@shared/sim/onsets.ts'
@@ -9,6 +10,7 @@ import { Button } from '../components/ui/Button.tsx'
 import { cn } from '../lib/cn.ts'
 import { useStore } from '../state/store.ts'
 import { TICK_SEC, resetSim, stepSim, useSim } from './simStore.ts'
+import { LOAD_MAX, LOAD_MIN, fmtRps, fmtX, stepLoad, useHeadroom, useLoad } from './load.ts'
 
 export const SPEEDS = [0.25, 0.5, 1, 2, 4, 10] as const
 
@@ -31,8 +33,9 @@ export function Timeline(): React.JSX.Element {
   const pos = live ? count - 1 : cursor
 
   return (
-    <Panel position="bottom-center">
-      <div className="flex w-[560px] max-w-[70vw] items-center gap-2 rounded-xl border bg-popover/95 px-3 py-2 shadow-lg backdrop-blur" role="toolbar" aria-label="Simulation controls">
+    // Spans the canvas so the bar can shrink to fit it (the scrubber gives way first).
+    <Panel position="bottom-center" className="pointer-events-none flex justify-center" style={{ width: 'calc(100% - 30px)' }}>
+      <div className="pointer-events-auto flex w-[820px] max-w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border bg-popover/95 px-3 py-2 shadow-lg backdrop-blur" role="toolbar" aria-label="Simulation controls">
         <Button variant="ghost" size="icon" className="size-8" aria-label={playing ? 'Pause' : 'Play'} onClick={() => useSim.setState({ playing: !playing, cursor: null })}>
           {playing ? <Pause /> : <Play />}
         </Button>
@@ -42,7 +45,7 @@ export function Timeline(): React.JSX.Element {
         <Button variant="ghost" size="icon" className="size-8" aria-label="Restart" title="Restart from zero" onClick={() => resetSim(model ?? null)}>
           <RotateCcw />
         </Button>
-        <div className="relative flex min-w-0 flex-1 items-center">
+        <div className="relative flex min-w-[140px] flex-1 items-center">
           <FailureMarks />
           <input
             type="range"
@@ -60,18 +63,46 @@ export function Timeline(): React.JSX.Element {
         <span className="w-28 text-right font-mono text-[11px] tabular-nums text-muted-foreground">
           {clock(t)} / {live ? <span className="text-success">Live</span> : clock((count - 1) * TICK_SEC)}
         </span>
-        <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+        <LoadControl />
+        <label className="flex items-center gap-1 text-[11px] text-muted-foreground" title="Playback speed: how fast simulated time runs. It does not change the traffic; use Load for that.">
           <FastForward className="size-3.5" />
-          <select aria-label="Speed" value={speed} onChange={(e) => useSim.setState({ speed: Number(e.target.value) })} className="h-7 rounded-md border bg-background px-1 text-xs text-foreground">
+          <select aria-label="Playback speed" value={speed} onChange={(e) => useSim.setState({ speed: Number(e.target.value) })} className="h-7 rounded-md border bg-background px-1 text-xs text-foreground">
             {SPEEDS.map((v) => (
               <option key={v} value={v}>
-                {v}×
+                {v}× speed
               </option>
             ))}
           </select>
         </label>
       </div>
     </Panel>
+  )
+}
+
+/** Traffic load: − / + step the multiplier; the label says what is being sent right now. Red past what it holds. */
+function LoadControl(): React.JSX.Element {
+  const model = useStore((s) => s.project?.model)
+  const { base, multiplier, pattern, now } = useLoad(model)
+  const room = useHeadroom(model)
+  const over = room !== null && room.limit !== null && multiplier * pattern > room.limit
+  const title = [
+    `Sending ${fmtRps(now)}: ${fmtRps(base)} from the entry points × ${fmtX(multiplier)}${pattern !== 1 ? ` × ${pattern.toFixed(2)} from the pattern` : ''}.`,
+    room === null ? 'Working out how much it holds…' : room.limit === null ? 'Holds past 20× with nothing failing.' : room.limit === 0 ? 'Something fails even with almost no load.' : `Holds up to ${fmtX(room.limit)} (${fmtRps(base * room.limit)}) before something fails.`,
+    'Set the base load per entry point in the Load section of the panel.',
+  ].join('\n')
+  return (
+    <div className="flex items-center gap-0.5 rounded-md border bg-background pl-1.5 text-[11px]" role="group" aria-label="Traffic load" title={title}>
+      <Gauge className={cn('size-3.5', over ? 'text-destructive' : 'text-muted-foreground')} />
+      <Button variant="ghost" size="icon" className="size-6" aria-label="Less traffic" disabled={multiplier <= LOAD_MIN} onClick={() => stepLoad(-1)}>
+        <Minus />
+      </Button>
+      <span className={cn('min-w-[86px] text-center font-mono tabular-nums', over && 'text-destructive')}>
+        {fmtX(multiplier)} · {fmtRps(now)}
+      </span>
+      <Button variant="ghost" size="icon" className="size-6" aria-label="More traffic" disabled={multiplier >= LOAD_MAX} onClick={() => stepLoad(1)}>
+        <Plus />
+      </Button>
+    </div>
   )
 }
 

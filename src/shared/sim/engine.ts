@@ -52,6 +52,9 @@ export interface Scenario {
 
 export const DEFAULT_SCENARIO: Scenario = { multiplier: 1, profile: 'constant', faults: [] }
 
+/** Load an entry point generates when its own is not set (rps). */
+export const DEFAULT_ENTRY_RPS = 100
+
 export type Health = 'ok' | 'warn' | 'bad'
 
 /**
@@ -365,7 +368,7 @@ export class Simulator {
     const factor = profileFactor(sc.profile, t) * sc.multiplier
     // Entry load; clients without explicit load still generate a little, so a fresh diagram animates.
     const entries = entryNodes(m)
-    for (const id of entries) add(id, (m.nodes[id]?.sim?.entryRps ?? 100) * factor)
+    for (const id of entries) add(id, (m.nodes[id]?.sim?.entryRps ?? DEFAULT_ENTRY_RPS) * factor)
 
     const edges: Record<string, EdgeFrame> = {}
     const waiting = new Map<string, number>()

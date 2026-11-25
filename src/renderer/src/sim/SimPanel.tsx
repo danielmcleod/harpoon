@@ -3,18 +3,19 @@
 // and causes, load controls, fault injection (crash, slow down, partition, rate limit, error burst) and flow tracing.
 import { Activity, Cable, ChevronRight, OctagonX, Pause, ShieldCheck, Sparkles, Play, Plus, Route, SkipBack, SkipForward, Trash2, X, Zap } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import type { FaultType, LoadProfile } from '@shared/sim/engine.ts'
+import type { FaultType } from '@shared/sim/engine.ts'
 import { Button } from '../components/ui/Button.tsx'
 import { cn } from '../lib/cn.ts'
 import { kindIcon, nodeColor } from '../lib/icons.tsx'
 import { useStore } from '../state/store.ts'
-import { addFault, currentFrame, endFault, removeFault, setScenario, simTime, toggleHealthy, useSim } from './simStore.ts'
+import { addFault, currentFrame, endFault, removeFault, simTime, toggleHealthy, useSim } from './simStore.ts'
 import type { Frame, Health } from '@shared/sim/engine.ts'
 import { describeEdgeCause, describeNodeCause, failureReport, linkName } from '@shared/sim/explain.ts'
 import type { Reason } from '@shared/sim/explain.ts'
 import { Sparkline } from './Sparkline.tsx'
-import { ScenarioBar } from './ScenarioBar.tsx'
+import { LoadSection } from './LoadSection.tsx'
 import { clock } from './Timeline.tsx'
+import { fmtRps } from './load.ts'
 import { fixFailures, investigateTraffic, reviewFlows } from './investigate.ts'
 import { lintModel } from '@shared/model/lint.ts'
 import { useTrafficBreaks } from './useTrafficBreaks.ts'
@@ -31,7 +32,6 @@ const FAULT_LABEL: Record<FaultType, string> = {
   region: 'Region outage',
 }
 
-const fmtRps = (v: number): string => (v >= 1000 ? `${(v / 1000).toFixed(1)}k rps` : `${Math.round(v)} rps`)
 const fmtMs = (v: number): string => `${v < 10 ? v.toFixed(1) : Math.round(v)} ms`
 const fmtPct = (v: number): string => `${(v * 100).toFixed(v < 0.01 ? 2 : 1)}%`
 
@@ -105,6 +105,8 @@ export function SimPanel(): React.JSX.Element {
         <Sparkline label="Error rate" values={series.err} times={series.t} color="var(--hx-rose)" format={(v) => `${v.toFixed(2)}%`} />
       </div>
 
+      <LoadSection />
+
       {frame !== null && frame.t > 0 && <Failing frame={frame} />}
 
       <TrafficStops />
@@ -166,28 +168,6 @@ export function SimPanel(): React.JSX.Element {
             </div>
           </div>
         )}
-      </section>
-
-      <section className="border-b p-3">
-        <h3 className="mb-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Load</h3>
-        <label className="flex items-center gap-2 text-xs">
-          <span className="w-16 text-muted-foreground">Traffic</span>
-          <input type="range" min={0.1} max={10} step={0.1} value={scenario.multiplier} onChange={(e) => setScenario({ multiplier: Number(e.target.value) })} className="flex-1 accent-[var(--primary)]" aria-label="Traffic multiplier" />
-          <span className="w-10 text-right font-mono tabular-nums">{scenario.multiplier.toFixed(1)}×</span>
-        </label>
-        <label className="mt-2 flex items-center gap-2 text-xs">
-          <span className="w-16 text-muted-foreground">Pattern</span>
-          <select value={scenario.profile} onChange={(e) => setScenario({ profile: e.target.value as LoadProfile })} className="h-7 flex-1 rounded-md border bg-background px-1 text-xs">
-            <option value="constant">Constant</option>
-            <option value="ramp">Ramp up</option>
-            <option value="spike">Spikes every minute</option>
-            <option value="diurnal">Day/night cycle</option>
-          </select>
-        </label>
-        <div className="mt-3">
-          <ScenarioBar />
-        </div>
-        <p className="mt-2 text-[11px] text-muted-foreground">Entry load comes from each node&apos;s “Generates” setting (clients default to 100 rps). Capacity and latency are in the inspector&apos;s Simulation section.</p>
       </section>
 
       <section className="border-b p-3">
