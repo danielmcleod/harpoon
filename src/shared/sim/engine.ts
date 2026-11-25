@@ -15,7 +15,7 @@
 //     unit that serves it and every unit inside it.
 //  4. Errors flow back up synchronous links (a caller fails when a dependency it waits on fails or times out).
 //  5. Async links into a slower consumer pile up as backlog on the broker, one backlog per consumer.
-import { ancestorsOf } from '../model/queries.ts'
+import { ancestorsOf, descendantIds } from '../model/queries.ts'
 import { resilienceOf } from '../model/resilience.ts'
 import type { HxNode, Model, NodeKind } from '../model/schema.ts'
 import { entryNodes, routes } from './paths.ts'
@@ -43,11 +43,51 @@ export interface Scenario {
   multiplier: number
   profile: LoadProfile
   faults: Fault[]
+  /**
+   * Node and connector ids forced healthy (what if this never failed?): they serve everything, fail nothing and pass
+   * no failure on, whatever the load or faults. A forced node takes everything inside it with it.
+   */
+  healthy?: string[]
 }
 
 export const DEFAULT_SCENARIO: Scenario = { multiplier: 1, profile: 'constant', faults: [] }
 
 export type Health = 'ok' | 'warn' | 'bad'
+
+/**
+ * Why a node is strained or failing this tick. `at` is the unit whose capacity serves the node (the node itself, or
+ * the service it is part of). Own causes start trouble; `dependency`, `calls` and `inner` pass it on from elsewhere.
+ */
+export type NodeCause =
+  /** Every instance gone: crashed, or its instances, zone or region lost. `fault`: the node a crash was injected on. */
+  | { kind: 'down'; at: string; by: FaultType[]; fault?: string }
+  /** Part of its capacity lost (some instances, a zone of several). `left`: share still serving. */
+  | { kind: 'capacity'; at: string; left: number; by: FaultType[] }
+  | { kind: 'ratelimit'; at: string; cap: number; fault?: string }
+  | { kind: 'slow'; at: string; factor: number; fault?: string }
+  /** An injected error burst. */
+  | { kind: 'errors'; at: string; rate: number; fault?: string }
+  /** More load than capacity (`dropped`: share turned away), or close to it. */
+  | { kind: 'overload'; at: string; util: number; dropped: number; rps: number; capacity: number }
+  /** Its own configured error rate is high. */
+  | { kind: 'own-errors'; at: string; rate: number }
+  /** Messages piling up on this broker for slower consumers. */
+  | { kind: 'backlog'; messages: number }
+  /** A synchronous, hard dependency fails (or times out, or is cut off) and the caller fails with it. */
+  | { kind: 'dependency'; node: string; connector: string; errorRate: number }
+  /** An inner part with no calls of its own fails because its service's calls fail. */
+  | { kind: 'calls'; node: string; errorRate: number }
+  /** A part inside this container fails. */
+  | { kind: 'inner'; node: string; errorRate: number }
+
+/** Why a connector is failing this tick. */
+export type EdgeCause =
+  | { kind: 'partition' }
+  | { kind: 'breaker' }
+  | { kind: 'timeout'; latencyMs: number; timeoutMs: number }
+  | { kind: 'callee'; errorRate: number }
+  /** Retries multiply calls into a failing callee. */
+  | { kind: 'retries'; factor: number }
 
 export interface NodeFrame {
   /** Requests per second arriving. */
@@ -57,6 +97,10 @@ export interface NodeFrame {
   errorRate: number
   backlog: number
   health: Health
+  /** Only when something is wrong. */
+  causes?: NodeCause[]
+  /** Forced healthy by the scenario. */
+  forced?: true
 }
 
 export interface EdgeFrame {
@@ -64,6 +108,10 @@ export interface EdgeFrame {
   errorRate: number
   breakerOpen: boolean
   health: Health
+  /** Only when something is wrong. */
+  causes?: EdgeCause[]
+  /** Forced healthy by the scenario. */
+  forced?: true
 }
 
 export interface Frame {
@@ -118,6 +166,8 @@ const LATENCY_CAP = 30
 const BREAKER_TRIP = 0.5
 const BREAKER_TICKS = 3
 const BREAKER_OPEN_SEC = 10
+/** Error rate passed on from elsewhere that counts as a cause (the line between ok and strained). */
+const PASS_ON = 0.02
 
 export function profileFactor(p: LoadProfile, t: number): number {
   switch (p) {
@@ -234,22 +284,28 @@ export class Simulator {
   }
 
   /** Share of a unit's capacity left under instance, zone and region faults (resilience as documented). */
-  #survives(u: string, active: readonly Fault[]): number {
+  #survives(u: string, active: readonly Fault[]): { left: number; by: FaultType[] } {
     const r = resilienceOf(this.#m, u)
     let left = 1
+    const by: FaultType[] = []
     for (const f of active) {
       if (f.type === 'instance' && this.#hit(u, f.target)) {
         const n = r?.instances ?? (r?.deployment === 'multi-instance' || r?.deployment === 'multi-zone' || r?.deployment === 'multi-region' ? 2 : 1)
         left *= n <= 1 ? 0 : (n - 1) / n
+        by.push('instance')
       } else if (f.type === 'zone' && r !== null && r.zones.includes(f.target)) {
         left *= (r.zones.length - 1) / r.zones.length
+        by.push('zone')
       } else if (f.type === 'region') {
         const n = this.#m.nodes[u]
         const region = n?.region ?? ancestorsOf(this.#m, u).find((a) => a.region !== null)?.region ?? null
-        if (region !== null && region.toLowerCase() === f.target.toLowerCase()) left *= r?.deployment === 'multi-region' ? 0.5 : 0
+        if (region !== null && region.toLowerCase() === f.target.toLowerCase()) {
+          left *= r?.deployment === 'multi-region' ? 0.5 : 0
+          by.push('region')
+        }
       }
     }
-    return left
+    return { left, by: [...new Set(by)] }
   }
 
   get time(): number {
@@ -263,18 +319,26 @@ export class Simulator {
     const cutOff = (connectorId: string): boolean => active.some((f) => f.type === 'partition' && f.target === connectorId)
     const fault = (type: FaultType, u: string): Fault | undefined => active.find((f) => f.type === type && this.#hit(u, f.target))
     const unit = (id: string): string => this.#unit.get(id) ?? id
+    const forced = new Set<string>()
+    for (const id of sc.healthy ?? []) {
+      forced.add(id)
+      if (m.nodes[id] !== undefined) for (const d of descendantIds(m, id)) forced.add(d)
+    }
     // What each unit can serve this tick: its capacity under a rate limit and what instance, zone and region faults
     // leave of it, and whether it is down.
-    const states = new Map<string, { capacity: number; down: boolean }>()
-    const stateOf = (u: string): { capacity: number; down: boolean } => {
+    type UnitState = { capacity: number; down: boolean; left: number; by: FaultType[]; cap: number | null; crash: string | null }
+    const states = new Map<string, UnitState>()
+    const stateOf = (u: string): UnitState => {
       let s = states.get(u)
+      if (s === undefined && forced.has(u)) states.set(u, (s = { capacity: Infinity, down: false, left: 1, by: [], cap: null, crash: null }))
       if (s === undefined) {
         let capacity = (this.#params.get(u) ?? KIND_DEFAULTS.service).capacity
         const rl = fault('ratelimit', u)
         if (rl !== undefined) capacity = Math.min(capacity, rl.value)
-        const left = this.#survives(u, active)
+        const { left, by } = this.#survives(u, active)
         capacity *= left
-        states.set(u, (s = { capacity, down: fault('down', u) !== undefined || left <= 0 }))
+        const crashed = fault('down', u)
+        states.set(u, (s = { capacity, down: crashed !== undefined || left <= 0, left, by: crashed !== undefined ? ['down', ...by] : by, cap: rl?.value ?? null, crash: crashed?.target ?? null }))
       }
       return s
     }
@@ -313,13 +377,24 @@ export class Simulator {
         continue
       }
       let rps = leaving(c.source, c.target) * (c.sim?.fanout ?? 1)
+      // A forced link, or one into a forced callee, never fails: no cut, no open breaker, no timeouts or errors.
+      const safe = forced.has(c.id) || forced.has(c.target)
+      if (safe) this.#breaker.delete(c.id)
       const br = this.#breaker.get(c.id) ?? { bad: 0, openUntil: -1, probing: false }
-      const open = c.policies.circuitBreaker && t < br.openUntil
-      const cut = cutOff(c.id)
-      const calleeErr = nodeErr(c.target)
+      const open = !safe && c.policies.circuitBreaker && t < br.openUntil
+      const cut = !forced.has(c.id) && cutOff(c.id)
+      const calleeErr = safe ? 0 : nodeErr(c.target)
+      const why: EdgeCause[] = []
+      if (cut) why.push({ kind: 'partition' })
+      if (open) why.push({ kind: 'breaker' })
       // Retries (synchronous links only) multiply load on a failing callee: the retry storm.
-      if (c.sync === 'sync' && (c.policies.retries ?? 0) > 0 && !open) rps *= 1 + (c.policies.retries ?? 0) * Math.min(1, calleeErr)
-      const timedOut = c.policies.timeoutMs !== null && nodeLat(c.target) > c.policies.timeoutMs
+      if (c.sync === 'sync' && (c.policies.retries ?? 0) > 0 && !open) {
+        const amp = 1 + (c.policies.retries ?? 0) * Math.min(1, calleeErr)
+        rps *= amp
+        if (amp > 1.05) why.push({ kind: 'retries', factor: amp })
+      }
+      const timedOut = !safe && c.policies.timeoutMs !== null && nodeLat(c.target) > c.policies.timeoutMs
+      if (timedOut && !cut && !open) why.push({ kind: 'timeout', latencyMs: nodeLat(c.target), timeoutMs: c.policies.timeoutMs ?? 0 })
       let err = cut || open ? 1 : timedOut ? 1 : 0
       // A consumer behind a queue or stream pulls at most what it can take now (nothing while it is down or cut
       // off, or the broker is down); the rest waits on the broker, each consumer link with its own backlog.
@@ -336,8 +411,9 @@ export class Simulator {
       }
       if (!cut && !open) add(c.target, rps, c.source)
       if (err === 0) err = Math.min(1, calleeErr)
-      edges[c.id] = { rps: cut || open ? 0 : rps, errorRate: err, breakerOpen: open, health: open || cut ? 'bad' : 'ok' }
-      if (c.policies.circuitBreaker && !open) {
+      edges[c.id] = { rps: cut || open ? 0 : rps, errorRate: err, breakerOpen: open, health: open || cut ? 'bad' : 'ok', ...(why.length > 0 ? { causes: why } : {}) }
+      if (forced.has(c.id)) edges[c.id] = { ...(edges[c.id] as EdgeFrame), forced: true }
+      if (c.policies.circuitBreaker && !open && !safe) {
         // An open breaker's own refusals do not count against the callee. Once the wait is over it is half-open:
         // calls go through for a tick, and what comes back (seen a tick later, like every error rate) closes it or
         // opens it again at once.
@@ -354,45 +430,74 @@ export class Simulator {
 
     // A unit that is down shows as down even when nothing reaches it any more.
     if (active.length > 0) for (const u of this.#params.keys()) if (!unitLoad.has(u) && stateOf(u).down) unitLoad.set(u, 0)
-    const unitFrame = new Map<string, { util: number; latency: number; err: number }>()
+    const unitFrame = new Map<string, { util: number; latency: number; err: number; causes: NodeCause[] }>()
     const served = new Map<string, number>()
     for (const [u, load] of unitLoad) {
       const p = this.#params.get(u) ?? KIND_DEFAULTS.service
       // Losing an instance, a zone or a region: what is left of the unit's capacity (0: down).
-      const { capacity, down } = stateOf(u)
+      const { capacity, down, left, by, cap, crash } = stateOf(u)
+      const safe = forced.has(u)
       const util = capacity <= 0 ? (load > 0 ? Infinity : 0) : load / capacity
-      const slow = fault('latency', u)?.value ?? 1
+      const slowBy = safe ? undefined : fault('latency', u)
+      const slow = slowBy?.value ?? 1
       const latency = Math.min(p.latencyMs * LATENCY_CAP, p.latencyMs / Math.max(1 / LATENCY_CAP, 1 - Math.min(util, 0.999))) * slow
       const drop = util > 1 ? 1 - 1 / util : 0
-      const extra = fault('errors', u)?.value ?? 0
-      const err = down ? 1 : Math.min(1, 1 - (1 - p.errorRate) * (1 - drop) * (1 - extra))
-      unitFrame.set(u, { util: down ? 1.5 : util, latency, err })
+      const burst = safe ? undefined : fault('errors', u)
+      const extra = burst?.value ?? 0
+      const err = safe ? 0 : down ? 1 : Math.min(1, 1 - (1 - p.errorRate) * (1 - drop) * (1 - extra))
+      const causes: NodeCause[] = []
+      // The node a fault was injected on, when that is not the unit itself (a container it sits in).
+      const on = (target: string | null | undefined): { fault?: string } => (target != null && target !== u && m.nodes[target] !== undefined ? { fault: target } : {})
+      if (down) causes.push({ kind: 'down', at: u, by, ...on(crash) })
+      else if (!safe) {
+        if (left < 1) causes.push({ kind: 'capacity', at: u, left, by })
+        if (cap !== null && cap < p.capacity) causes.push({ kind: 'ratelimit', at: u, cap, ...on(fault('ratelimit', u)?.target) })
+        if (util > 0.8) causes.push({ kind: 'overload', at: u, util, dropped: drop, rps: load, capacity })
+        if (extra > 0) causes.push({ kind: 'errors', at: u, rate: extra, ...on(burst?.target) })
+        if (p.errorRate > 0.02) causes.push({ kind: 'own-errors', at: u, rate: p.errorRate })
+      }
+      if (slow !== 1) causes.push({ kind: 'slow', at: u, factor: slow, ...on(slowBy?.target) })
+      unitFrame.set(u, { util: down ? 1.5 : util, latency, err, causes })
       served.set(u, 1 - drop)
     }
     this.#served = served
 
     // Errors flow back up synchronous links (reverse dependency order), and async backlog builds on brokers.
     const nodeErrNow = new Map<string, number>()
-    for (const id of Object.keys(m.nodes)) nodeErrNow.set(id, unitFrame.get(this.#unit.get(id) ?? id)?.err ?? 0)
+    for (const id of Object.keys(m.nodes)) nodeErrNow.set(id, forced.has(id) ? 0 : (unitFrame.get(this.#unit.get(id) ?? id)?.err ?? 0))
+    // Failures passed on to a node from elsewhere (what it waits on, its service's calls, its inner parts).
+    const passed = new Map<string, NodeCause[]>()
+    const pass = (id: string, cause: NodeCause): void => {
+      const list = passed.get(id)
+      if (list === undefined) passed.set(id, [cause])
+      else list.push(cause)
+    }
     for (const r of [...this.#order].reverse()) {
       const c = r.connector
       if (c === undefined) {
+        if (forced.has(r.from)) continue
         // An inner part's failure shows on its container (by its share); a service's failing calls on the part.
         const from = nodeErrNow.get(r.from) ?? 0
         const to = (nodeErrNow.get(r.to) ?? 0) * (r.kind === 'into' ? r.share : 1)
         nodeErrNow.set(r.from, Math.min(1, 1 - (1 - from) * (1 - to)))
+        if (to > PASS_ON) pass(r.from, { kind: r.kind === 'into' ? 'inner' : 'calls', node: r.to, errorRate: nodeErrNow.get(r.to) ?? 0 })
         continue
       }
       const e = edges[c.id]
       if (e === undefined) continue
       // A soft dependency fails without failing its caller (fallback, cache).
-      if (c.sync === 'sync' && c.dependency !== 'soft') {
-        const calleeErr = e.breakerOpen || e.rps === 0 ? e.errorRate : Math.max(e.errorRate, nodeErrNow.get(c.target) ?? 0)
+      if (c.sync === 'sync' && c.dependency !== 'soft' && !forced.has(c.source)) {
+        const calleeErr = forced.has(c.id) ? 0 : e.breakerOpen || e.rps === 0 ? e.errorRate : Math.max(e.errorRate, nodeErrNow.get(c.target) ?? 0)
         e.errorRate = calleeErr
         const share = Math.min(1, c.sim?.fanout ?? 1)
         nodeErrNow.set(c.source, Math.min(1, 1 - (1 - (nodeErrNow.get(c.source) ?? 0)) * (1 - calleeErr * share)))
+        if (calleeErr * share > PASS_ON) pass(c.source, { kind: 'dependency', node: c.target, connector: c.id, errorRate: calleeErr })
       }
       e.health = e.breakerOpen ? 'bad' : healthOf(0, e.errorRate)
+      // The callee's own failure, when nothing on the link itself explains it.
+      if (e.health !== 'ok' && !(e.causes ?? []).some((x) => x.kind === 'partition' || x.kind === 'breaker' || x.kind === 'timeout')) {
+        e.causes = [...(e.causes ?? []), { kind: 'callee', errorRate: e.errorRate }]
+      }
     }
     const nodes: Record<string, NodeFrame> = {}
     for (const n of Object.values(m.nodes)) {
@@ -401,6 +506,11 @@ export class Simulator {
       const err = nodeErrNow.get(n.id) ?? 0
       const util = uf?.util ?? 0
       const backlog = waiting.get(n.id) ?? 0
+      if (forced.has(n.id)) {
+        nodes[n.id] = { rps: arrivals.get(n.id) ?? 0, util: uf?.util ?? 0, latencyMs: uf?.latency ?? 0, errorRate: 0, backlog, health: 'ok', forced: true }
+        continue
+      }
+      const causes = [...(uf?.causes ?? []), ...(backlog > 500 ? [{ kind: 'backlog', messages: backlog } as const] : []), ...(passed.get(n.id) ?? [])]
       nodes[n.id] = {
         rps: arrivals.get(n.id) ?? 0,
         util,
@@ -408,17 +518,26 @@ export class Simulator {
         errorRate: err,
         backlog,
         health: backlog > 5000 ? 'bad' : backlog > 500 ? 'warn' : healthOf(util, err),
+        ...(causes.length > 0 ? { causes } : {}),
       }
     }
     // Containers show the worst of what is inside them.
+    const rank = { ok: 0, warn: 1, bad: 2 }
+    const worstInside = new Map<string, string>()
     for (const n of Object.values(m.nodes)) {
       for (const a of ancestorsOf(m, n.id)) {
         const af = nodes[a.id]
         const nf = nodes[n.id]
-        if (af === undefined || nf === undefined) continue
-        const rank = { ok: 0, warn: 1, bad: 2 }
-        if (rank[nf.health] > rank[af.health]) af.health = nf.health
+        if (af === undefined || nf === undefined || af.forced === true) continue
+        if (rank[nf.health] > rank[af.health]) {
+          af.health = nf.health
+          worstInside.set(a.id, n.id)
+        }
       }
+    }
+    for (const [id, inner] of worstInside) {
+      const f = nodes[id]
+      if (f !== undefined && !(f.causes ?? []).some((x) => x.kind === 'inner')) f.causes = [...(f.causes ?? []), { kind: 'inner', node: inner, errorRate: nodes[inner]?.errorRate ?? 0 }]
     }
 
     // Totals at entry points: end-to-end latency is approximated by the slowest synchronous chain from each entry,

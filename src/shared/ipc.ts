@@ -681,6 +681,8 @@ export interface SavedScenario {
   multiplier: number
   profile: 'constant' | 'ramp' | 'spike' | 'diurnal'
   faults: { id: string; type: 'down' | 'latency' | 'partition' | 'ratelimit' | 'errors' | 'instance' | 'zone' | 'region'; target: string; value: number; from: number; until: number | null }[]
+  /** Node and connector ids forced healthy. */
+  healthy?: string[] | undefined
 }
 
 export type ExportFormat =

@@ -88,4 +88,10 @@ export function removeFault(id: string): void {
   setScenario({ faults: useSim.getState().scenario.faults.filter((f) => f.id !== id) })
 }
 
+/** Force a node or connector healthy (what if it never failed?), or stop forcing it. */
+export function toggleHealthy(id: string): void {
+  const cur = useSim.getState().scenario.healthy ?? []
+  setScenario({ healthy: cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id] })
+}
+
 export { TICK_SEC }

@@ -27,7 +27,7 @@ export function ScenarioBar(): React.JSX.Element | null {
     if (n === '') return
     const sc = useSim.getState().scenario
     const existing = items.find((x) => x.name === n)
-    const item: SavedScenario = { id: existing?.id ?? uniqueId(n, (x) => items.some((i) => i.id === x)), name: n, multiplier: sc.multiplier, profile: sc.profile, faults: sc.faults }
+    const item: SavedScenario = { id: existing?.id ?? uniqueId(n, (x) => items.some((i) => i.id === x)), name: n, multiplier: sc.multiplier, profile: sc.profile, faults: sc.faults, ...((sc.healthy ?? []).length > 0 ? { healthy: sc.healthy } : {}) }
     const r = await invoke('collection.put', { kind: 'scenarios', item })
     if (!r.ok) return toast(r.error.message, 'error')
     setItems((xs) => [...xs.filter((x) => x.id !== item.id), item])
@@ -44,7 +44,7 @@ export function ScenarioBar(): React.JSX.Element | null {
           onChange={(e) => {
             const s = items.find((x) => x.id === e.target.value)
             if (s === undefined) return
-            useSim.setState({ scenario: { multiplier: s.multiplier, profile: s.profile, faults: s.faults } })
+            useSim.setState({ scenario: { multiplier: s.multiplier, profile: s.profile, faults: s.faults, healthy: s.healthy ?? [] } })
             resetSim(useStore.getState().project?.model ?? null)
             toast(`Loaded “${s.name}”. Press play to run it from the start.`)
           }}

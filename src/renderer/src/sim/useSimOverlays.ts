@@ -17,6 +17,7 @@ export function useSimOverlays(active: boolean): CanvasOverlays | undefined {
     return `${n}#${e}#${f.t > 0 ? 1 : 0}`
   })
   const trace = useSim((s) => s.trace)
+  const forced = useSim((s) => s.scenario.healthy)
   const flows = useStore((s) => s.project?.model.flows)
   const connectors = useStore((s) => s.project?.model.connectors)
   const breaks = useTrafficBreaks()
@@ -53,6 +54,8 @@ export function useSimOverlays(active: boolean): CanvasOverlays | undefined {
       const mk = BREAK_MARK[b.kind]
       if (mk !== undefined && !marks.has(b.nodeId)) marks.set(b.nodeId, { ...mk, title: `${b.message} ${b.hint}` })
     }
+    // Forced healthy: say why it stays green whatever happens.
+    for (const id of forced ?? []) marks.set(id, { label: 'Forced', tone: 'info', title: 'Forced healthy in this scenario: it serves everything and passes no failure on.' })
     return { health, edgeHealth, particles: true, emphasis, highlight, marks }
-  }, [active, healthKey, trace, flows, connectors, breaks])
+  }, [active, healthKey, trace, flows, connectors, breaks, forced])
 }

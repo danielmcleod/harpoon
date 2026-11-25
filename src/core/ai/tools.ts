@@ -21,6 +21,7 @@ import {
   FlowZ,
   HOSTINGS,
   NODE_KINDS,
+  NodeSimZ,
   NodeZ,
   ResilienceZ,
   DEPLOYMENTS,
@@ -39,6 +40,9 @@ import { RuleZ, ruleProblem } from '../../shared/model/rules.ts'
 import type { Rule } from '../../shared/model/rules.ts'
 import type { AiMode, Effort } from '../../shared/ipc.ts'
 import { entryNodes, reach, trafficBreaks } from '../../shared/sim/paths.ts'
+import { Simulator } from '../../shared/sim/engine.ts'
+import type { Frame } from '../../shared/sim/engine.ts'
+import { failureText } from '../../shared/sim/explain.ts'
 import { resilienceFindings } from '../../shared/model/resilience.ts'
 import { redactText } from '../../shared/redact.ts'
 import type { Draft } from './draft.ts'
@@ -162,6 +166,32 @@ const ResilienceIn = z
     notes: z.string().max(2000).nullable().optional(),
   })
   .describe('Availability: deployment, instances, zones, failover, backups (from Kubernetes replicas/HPA/PDB, autoscaling groups, Multi-AZ settings, Terraform AZ lists, compose deploy.replicas)')
+
+/** The traffic simulator's settings for a node (modelled numbers, used by simulate and the Traffic Simulator). */
+const SimIn = z
+  .object({
+    capacityRps: z.number().min(0).nullable().optional().describe('Requests/s it serves before it saturates (all instances together)'),
+    latencyMs: z.number().min(0).nullable().optional().describe('Base service time per request'),
+    errorRate: z.number().min(0).max(1).nullable().optional().describe('Share of requests that fail on their own'),
+    entryRps: z.number().min(0).nullable().optional().describe('Load it generates as an entry point (clients, schedulers)'),
+  })
+  .describe('Simulation settings (null: the default for its kind)')
+
+/** Merge stated simulation settings onto what the node has. */
+function simOf(cur: HxNode['sim'], a: z.infer<typeof SimIn> | undefined): HxNode['sim'] | undefined {
+  if (a === undefined) return undefined
+  const next: Record<string, unknown> = { capacityRps: null, latencyMs: null, errorRate: null, entryRps: null, ...cur }
+  for (const [k, v] of Object.entries(a)) if (v !== undefined) next[k] = v
+  return NodeSimZ.parse(next)
+}
+
+const FaultIn = z.object({
+  type: z.enum(['down', 'latency', 'partition', 'ratelimit', 'errors', 'instance', 'zone', 'region']),
+  target: z.string().describe('Node id (down, latency, ratelimit, errors, instance), connector id (partition), or a zone / region name'),
+  value: z.number().min(0).optional().describe('latency: multiplier; ratelimit: rps cap; errors: error rate 0..1'),
+  from: z.number().min(0).optional().describe('Simulated second it starts (default 0)'),
+  until: z.number().min(0).nullable().optional().describe('Simulated second it ends (default: never)'),
+})
 
 /** Merge stated resilience fields onto what the node has. */
 function resilienceOf(cur: HxNode['resilience'], a: z.infer<typeof ResilienceIn> | undefined): HxNode['resilience'] | undefined {
@@ -502,6 +532,7 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
         evidence: z.array(EvidenceIn).optional(),
         confidence: z.number().min(0).max(1).optional(),
         resilience: ResilienceIn.optional(),
+        sim: SimIn.optional(),
       },
       annotations: draftWrite
     },
@@ -539,6 +570,7 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
           confidence: a.confidence ?? null,
           provenance: prov(),
           resilience: resilienceOf(null, a.resilience) ?? null,
+          sim: simOf(null, a.sim) ?? null,
         })
         stage([...gov.ops, { op: 'addNode', node, at }])
         if (!placed) d.markUnplaced(id)
@@ -574,6 +606,7 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
         evidence: z.array(EvidenceIn).optional().describe('Replaces the evidence list'),
         confidence: z.number().min(0).max(1).nullable().optional(),
         resilience: ResilienceIn.optional(),
+        sim: SimIn.optional(),
       },
       annotations: draftWrite
     },
@@ -605,6 +638,7 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
         set('evidence', a.evidence === undefined ? undefined : evidenceOf(a.evidence))
         set('confidence', a.confidence)
         set('resilience', resilienceOf(cur.resilience, a.resilience))
+        set('sim', simOf(cur.sim, a.sim))
         const gov = governance(a)
         for (const [k, v] of Object.entries(gov.fields)) set(k, v)
         if (Object.keys(patch).length === 0) return ok({ id, unchanged: true })
@@ -1014,6 +1048,36 @@ export function registerTools(rawServer: McpServer, ctx: ToolContext): void {
           reached: [...r.nodes].map((id) => own(m.nodes, id)?.name ?? id),
           stops: trafficBreaks(m, sources).map((b) => ({ kind: b.kind, node: b.nodeId, connector: b.connectorId, message: b.message, fix: b.hint })),
         })
+      }),
+  )
+
+  server.registerTool(
+    'simulate',
+    {
+      description:
+        "Run the traffic simulator on the draft: load from the entry points through every node's capacity and each connector's policies, with the faults you give. Returns throughput, errors and latency, and what is strained or failing: the root causes (down, overloaded, an injected fault, a cut link) and the knock-on failures they cause. Use it to reproduce a failing scenario and check that your changes fix it. Modelled, not measured.",
+      inputSchema: {
+        multiplier: z.number().min(0).max(1000).optional().describe('Traffic multiplier (default 1)'),
+        profile: z.enum(['constant', 'ramp', 'spike', 'diurnal']).optional(),
+        faults: z.array(FaultIn).max(100).optional(),
+        healthy: z.array(z.string()).max(200).optional().describe('Node or connector ids forced healthy (left out of the question)'),
+        seconds: z.number().min(1).max(600).optional().describe('Simulated seconds to run (default 30); the report is for the last one'),
+      },
+      annotations: ro,
+    },
+    (a) =>
+      guard(() => {
+        const sim = new Simulator(d.model)
+        const sc = {
+          multiplier: a.multiplier ?? 1,
+          profile: a.profile ?? 'constant',
+          faults: (a.faults ?? []).map((f, i) => ({ id: `f${i}`, type: f.type, target: f.target, value: f.value ?? 0, from: f.from ?? 0, until: f.until ?? null })),
+          healthy: a.healthy ?? [],
+        }
+        const ticks = Math.round((a.seconds ?? 30) * 4)
+        let f: Frame | null = null
+        for (let i = 0; i < ticks; i++) f = sim.step(sc)
+        return ok({ report: f === null ? 'Nothing ran.' : failureText(d.model, f) })
       }),
   )
 

@@ -40,6 +40,7 @@ export const ScenarioZ = z.object({
   multiplier: z.number().min(0).max(1000),
   profile: z.enum(['constant', 'ramp', 'spike', 'diurnal']),
   faults: z.array(FaultZ).max(500),
+  healthy: z.array(z.string().max(200)).max(500).optional(),
 })
 
 export const TableViewZ = z.object({

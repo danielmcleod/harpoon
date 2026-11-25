@@ -1,17 +1,21 @@
-// The simulator's side panel (mockup 2): headline numbers, throughput / latency / error charts, the selected node's
-// live state, load controls, fault injection (crash, slow down, partition, rate limit, error burst) and flow tracing.
-import { Activity, OctagonX, Pause, Sparkles, Play, Plus, Route, SkipBack, SkipForward, Trash2, X, Zap } from 'lucide-react'
+// The simulator's side panel (mockup 2): headline numbers, throughput / latency / error charts, what is failing and
+// why (root causes first, each with an AI fix and a way to force it healthy), the selected node's or link's live state
+// and causes, load controls, fault injection (crash, slow down, partition, rate limit, error burst) and flow tracing.
+import { Activity, Cable, ChevronRight, OctagonX, Pause, ShieldCheck, Sparkles, Play, Plus, Route, SkipBack, SkipForward, Trash2, X, Zap } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { FaultType, LoadProfile } from '@shared/sim/engine.ts'
 import { Button } from '../components/ui/Button.tsx'
 import { cn } from '../lib/cn.ts'
 import { kindIcon, nodeColor } from '../lib/icons.tsx'
 import { useStore } from '../state/store.ts'
-import { addFault, currentFrame, endFault, removeFault, setScenario, simTime, useSim } from './simStore.ts'
+import { addFault, currentFrame, endFault, removeFault, setScenario, simTime, toggleHealthy, useSim } from './simStore.ts'
+import type { Frame, Health } from '@shared/sim/engine.ts'
+import { describeEdgeCause, describeNodeCause, failureReport, linkName } from '@shared/sim/explain.ts'
+import type { Reason } from '@shared/sim/explain.ts'
 import { Sparkline } from './Sparkline.tsx'
 import { ScenarioBar } from './ScenarioBar.tsx'
 import { clock } from './Timeline.tsx'
-import { investigateTraffic, reviewFlows } from './investigate.ts'
+import { fixFailures, investigateTraffic, reviewFlows } from './investigate.ts'
 import { lintModel } from '@shared/model/lint.ts'
 import { useTrafficBreaks } from './useTrafficBreaks.ts'
 import { select } from '../state/actions.ts'
@@ -53,6 +57,8 @@ export function SimPanel(): React.JSX.Element {
 
   if (model === undefined) return <aside className="w-[360px] border-l bg-panel" />
   const selId = selection?.kind === 'node' ? selection.ids[0] : undefined
+  const selConnId = selection?.kind === 'connector' ? selection.ids[0] : undefined
+  const healthy = scenario.healthy ?? []
   const sel = selId !== undefined ? model.nodes[selId] : undefined
   const nf = sel !== undefined ? frame?.nodes[sel.id] : undefined
   const Icon = sel !== undefined ? kindIcon(sel.kind) : Activity
@@ -99,12 +105,16 @@ export function SimPanel(): React.JSX.Element {
         <Sparkline label="Error rate" values={series.err} times={series.t} color="var(--hx-rose)" format={(v) => `${v.toFixed(2)}%`} />
       </div>
 
+      {frame !== null && frame.t > 0 && <Failing frame={frame} />}
+
       <TrafficStops />
 
       <section className="border-b p-3">
         <h3 className="mb-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Selected</h3>
-        {sel === undefined ? (
-          <p className="text-xs text-muted-foreground">Click a node to see its live load.</p>
+        {sel === undefined && selConnId !== undefined && model.connectors[selConnId] !== undefined ? (
+          <SelectedLink id={selConnId} frame={frame} />
+        ) : sel === undefined ? (
+          <p className="text-xs text-muted-foreground">Click a node or a link to see its live load and why it fails.</p>
         ) : (
           <div>
             <div className="flex items-center gap-2">
@@ -134,6 +144,17 @@ export function SimPanel(): React.JSX.Element {
                 )}
               </dl>
             )}
+            {nf?.forced === true ? (
+              <p className="mt-2 text-[11px] text-hx-cyan">Forced healthy: it serves everything and passes no failure on.</p>
+            ) : (
+              nf?.causes !== undefined &&
+              nf.health !== 'ok' && (
+                <div className="mt-2">
+                  <h4 className="text-[11px] font-medium text-muted-foreground">Why</h4>
+                  <Reasons reasons={nf.causes.map((c) => describeNodeCause(model, sel.id, c, frame ?? undefined))} />
+                </div>
+              )
+            )}
             <div className="mt-2 flex flex-wrap gap-1">
               <Button size="sm" variant="outline" icon={<Zap />} onClick={() => addFault({ type: 'down', target: sel.id, value: 0, until: null })}>
                 Crash it
@@ -141,6 +162,7 @@ export function SimPanel(): React.JSX.Element {
               <Button size="sm" variant="outline" onClick={() => addFault({ type: 'latency', target: sel.id, value: 5, until: null })}>
                 Slow ×5
               </Button>
+              <ForceButton id={sel.id} />
             </div>
           </div>
         )}
@@ -235,6 +257,22 @@ export function SimPanel(): React.JSX.Element {
             )
           })}
         </ul>
+        {healthy.length > 0 && (
+          <div className="mt-2">
+            <h4 className="mb-1 text-[11px] font-medium text-muted-foreground">Forced healthy</h4>
+            <ul className="flex flex-col gap-1">
+              {healthy.map((id) => (
+                <li key={id} className="flex items-center gap-2 rounded-md border border-hx-cyan/40 bg-hx-cyan/10 px-2 py-1 text-[11px]">
+                  <ShieldCheck className="size-3 text-hx-cyan" />
+                  <span className="min-w-0 flex-1 truncate">{model.nodes[id]?.name ?? (model.connectors[id] !== undefined ? linkName(model, id) : id)}</span>
+                  <button type="button" title="Stop forcing it healthy" aria-label="Stop forcing healthy" onClick={() => toggleHealthy(id)} className="text-muted-foreground hover:text-foreground">
+                    <X className="size-3" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </section>
 
       <section className="p-3">
@@ -347,6 +385,149 @@ function FlowProblems({ flowId }: { flowId: string }): React.JSX.Element | null 
           Fix this flow with AI
         </button>
       )}
+    </div>
+  )
+}
+
+const HEALTH_TEXT: Record<Health, string> = { ok: 'text-success', warn: 'text-warning', bad: 'text-destructive' }
+
+/** Reasons in words; the ones that point at another node or link select it. */
+function Reasons({ reasons }: { reasons: Reason[] }): React.JSX.Element {
+  return (
+    <ul className="mt-0.5 flex flex-col gap-0.5 text-[11px]">
+      {reasons.map((r, i) => {
+        const ref = r.ref
+        return (
+          <li key={i} className="flex items-start gap-1">
+            <ChevronRight className="mt-0.5 size-3 shrink-0 text-muted-foreground" />
+            {ref === undefined ? (
+              <span>{r.text}</span>
+            ) : (
+              <button type="button" className="text-left hover:underline" onClick={() => select({ kind: ref.kind, ids: [ref.id] })} title="Select it">
+                {r.text}
+              </button>
+            )}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+/** Force a node or link healthy in this scenario (as if it never failed), or stop forcing it. */
+function ForceButton({ id }: { id: string }): React.JSX.Element {
+  const on = useSim((s) => (s.scenario.healthy ?? []).includes(id))
+  return (
+    <Button size="sm" variant={on ? 'secondary' : 'outline'} icon={<ShieldCheck />} onClick={() => toggleHealthy(id)} title={on ? 'Let it fail again' : 'What if this never failed? It serves everything and passes no failure on'}>
+      {on ? 'Forced healthy' : 'Force healthy'}
+    </Button>
+  )
+}
+
+/** What is strained or failing right now: root causes first (with an AI fix and force healthy), then knock-ons. */
+function Failing({ frame }: { frame: Frame }): React.JSX.Element | null {
+  const model = useStore((s) => s.project?.model)
+  const editor = useStore((s) => s.ui.mode !== 'docs')
+  const report = useMemo(() => (model === undefined ? null : failureReport(model, frame)), [model, frame])
+  if (report === null || model === undefined || report.roots.length === 0) return null
+  const names = new Map(report.roots.map((r) => [r.key, r.name]))
+  return (
+    <section className="border-b p-3" aria-label="What is failing">
+      <div className="mb-2 flex items-center gap-2">
+        <h3 className="flex-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">What&apos;s failing ({report.roots.length})</h3>
+        {editor && (
+          <Button size="sm" variant="ghost" icon={<Sparkles />} onClick={() => fixFailures(null)} title="The AI reproduces this scenario, proposes changes that survive it and checks them in the simulator">
+            Fix all with AI
+          </Button>
+        )}
+      </div>
+      <ul className="flex flex-col gap-1.5">
+        {report.roots.map((r) => (
+          <li key={r.key} className="rounded-md border p-2 text-xs">
+            <button type="button" className="flex w-full items-center gap-1.5 text-left" onClick={() => select({ kind: r.ref.kind, ids: [r.ref.id] })}>
+              {r.ref.kind === 'connector' ? <Cable className={cn('size-3.5 shrink-0', HEALTH_TEXT[r.health])} /> : <OctagonX className={cn('size-3.5 shrink-0', HEALTH_TEXT[r.health])} />}
+              <span className="min-w-0 flex-1 truncate font-medium">{r.name}</span>
+              {r.affects.length > 0 && <span className="shrink-0 text-[10px] text-muted-foreground">+{r.affects.length} knock-on</span>}
+            </button>
+            <div className="ml-5">
+              <Reasons reasons={r.reasons} />
+              <div className="mt-1 flex gap-3 text-[11px]">
+                {editor && (
+                  <button type="button" className="text-primary hover:underline" onClick={() => fixFailures(r.key)}>
+                    Fix with AI
+                  </button>
+                )}
+                <button type="button" className="text-hx-cyan hover:underline" onClick={() => toggleHealthy(r.ref.id)} title="What if this never failed? It serves everything and passes no failure on">
+                  Force healthy
+                </button>
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
+      {report.knockOn.length > 0 && (
+        <details className="mt-2 text-xs">
+          <summary className="cursor-pointer text-[11px] text-muted-foreground">{report.knockOn.length} knock-on failures</summary>
+          <ul className="mt-1 flex flex-col gap-1">
+            {report.knockOn.map((k) => (
+              <li key={k.nodeId}>
+                <button type="button" className="flex w-full items-start gap-1.5 text-left hover:underline" onClick={() => select({ kind: 'node', ids: [k.nodeId] })}>
+                  <span className={cn('mt-1 size-1.5 shrink-0 rounded-full', k.health === 'bad' ? 'bg-destructive' : 'bg-warning')} />
+                  <span>
+                    {k.name} <span className="text-muted-foreground">← {k.roots.map((x) => names.get(x) ?? x).join(', ')}</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </section>
+  )
+}
+
+/** The selected link's live state and why it fails. */
+function SelectedLink({ id, frame }: { id: string; frame: Frame | null }): React.JSX.Element | null {
+  const model = useStore((s) => s.project?.model)
+  if (model === undefined) return null
+  const ef = frame?.edges[id]
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <Cable className="size-4 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{linkName(model, id)}</span>
+        {ef !== undefined && (
+          <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-semibold', ef.health === 'ok' ? 'bg-success/15 text-success' : ef.health === 'warn' ? 'bg-warning/15 text-warning' : 'bg-destructive/15 text-destructive')}>
+            {ef.health === 'ok' ? 'Healthy' : ef.health === 'warn' ? 'Strained' : 'Failing'}
+          </span>
+        )}
+      </div>
+      {ef !== undefined && (
+        <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+          <dt className="text-muted-foreground">Calls</dt>
+          <dd className="text-right font-mono tabular-nums">{fmtRps(ef.rps)}</dd>
+          <dt className="text-muted-foreground">Error rate</dt>
+          <dd className="text-right font-mono tabular-nums">{fmtPct(ef.errorRate)}</dd>
+          <dt className="text-muted-foreground">Circuit breaker</dt>
+          <dd className="text-right">{ef.breakerOpen ? 'Open' : model.connectors[id]?.policies.circuitBreaker === true ? 'Closed' : 'None'}</dd>
+        </dl>
+      )}
+      {ef?.forced === true ? (
+        <p className="mt-2 text-[11px] text-hx-cyan">Forced healthy: never cut, never refused, never times out.</p>
+      ) : (
+        ef?.causes !== undefined && (
+          <div className="mt-2">
+            <h4 className="text-[11px] font-medium text-muted-foreground">Why</h4>
+            <Reasons reasons={ef.causes.map((c) => ({ text: describeEdgeCause(model, c) }))} />
+          </div>
+        )
+      )}
+      <div className="mt-2 flex flex-wrap gap-1">
+        <Button size="sm" variant="outline" icon={<Zap />} onClick={() => addFault({ type: 'partition', target: id, value: 0, until: null })}>
+          Cut it
+        </Button>
+        <ForceButton id={id} />
+      </div>
     </div>
   )
 }
