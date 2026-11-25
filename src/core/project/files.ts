@@ -80,7 +80,7 @@ function parseJson(text: string, file: string): unknown {
 export function repairNotice(repairs: readonly string[]): string {
   const shown = repairs.slice(0, 3).join(' ')
   const more = repairs.length > 3 ? ` And ${repairs.length - 3} more (see the log).` : ''
-  return `This project had broken references and was repaired: ${shown}${more} Undo is not possible; check the file's history if this is unexpected.`
+  return `This project had problems and was repaired:${shown}${more} Undo is not possible; check the file's history if this is unexpected.`
 }
 
 /**
@@ -133,7 +133,18 @@ export function parseModelWithRepairs(projectText: string, layoutText: string | 
   if (typeof version === 'number' && version > SCHEMA_VERSION) {
     throw new HarpoonError('NEWER_SCHEMA', `This project was saved by a newer Harpoon (schema ${version}).`)
   }
-  const p = ProjectFileZ.safeParse(raw)
+  const clipped: string[] = []
+  let p = ProjectFileZ.safeParse(raw)
+  // Text over a field's limit (an older build or a hand edit let it through) is cut to fit rather than refusing the
+  // whole project; anything else wrong still fails below.
+  for (let pass = 0; !p.success && pass < 5; pass++) {
+    const long = p.error.issues.flatMap((i) => (i.code === 'too_big' && i.origin === 'string' ? [{ path: i.path, max: Number(i.maximum) }] : []))
+    if (long.length === 0) break
+    for (const i of long) {
+      if (clipAt(raw, i.path, i.max)) clipped.push(`${i.path.join('.')} was longer than ${String(i.max)} characters and was shortened.`)
+    }
+    p = ProjectFileZ.safeParse(raw)
+  }
   if (!p.success) {
     const first = p.error.issues[0]
     const where = first === undefined ? '' : ` at ${first.path.join('.')}: ${first.message}`
@@ -146,7 +157,23 @@ export function parseModelWithRepairs(projectText: string, layoutText: string | 
     if (l.success) layout = l.data
   }
   const model = modelFromFiles(p.data, layout)
-  return { model, repairs: repairModel(model) }
+  return { model, repairs: [...clipped, ...repairModel(model)] }
+}
+
+/** Cut the string at `path` inside `root` to `max` characters; false when there is no string there. */
+function clipAt(root: unknown, path: readonly PropertyKey[], max: number): boolean {
+  if (path.length === 0 || !Number.isFinite(max)) return false
+  let parent: unknown = root
+  for (const k of path.slice(0, -1)) {
+    if (parent === null || typeof parent !== 'object') return false
+    parent = (parent as Record<PropertyKey, unknown>)[k]
+  }
+  if (parent === null || typeof parent !== 'object') return false
+  const key = path[path.length - 1] as PropertyKey
+  const v = (parent as Record<PropertyKey, unknown>)[key]
+  if (typeof v !== 'string') return false
+  ;(parent as Record<PropertyKey, unknown>)[key] = `${v.slice(0, Math.max(0, max - 1)).trimEnd()}…`
+  return true
 }
 
 export interface LoadedProject {

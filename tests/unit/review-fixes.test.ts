@@ -120,4 +120,11 @@ describe('review fixes', () => {
     }
     expect(descendantIds(cyclic, 'a')).toEqual(['b'])
   })
+
+  it('opens a project with an over-long text field, shortening it', () => {
+    const file = JSON.stringify({ schemaVersion: 1, meta: { id: 'p', name: 'P' }, nodes: [{ id: 'a', name: 'A', techStack: 'x'.repeat(450) }], connectors: [] })
+    const { model, repairs } = parseModelWithRepairs(file, null)
+    expect(model.nodes['a']?.techStack).toHaveLength(200)
+    expect(repairs).toHaveLength(1)
+  })
 })

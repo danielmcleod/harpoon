@@ -5,7 +5,8 @@ import { arrangeLevel } from '../../shared/geometry/tidy.ts'
 import { compareModels, diffModels } from '../../shared/model/diff.ts'
 import type { ChangeSummary } from '../../shared/model/diff.ts'
 import { slugify, uniqueId } from '../../shared/model/ids.ts'
-import { applyOps } from '../../shared/model/ops.ts'
+import { z } from 'zod'
+import { OpZ, applyOps } from '../../shared/model/ops.ts'
 import { ancestorsOf } from '../../shared/model/queries.ts'
 import type { Op } from '../../shared/model/ops.ts'
 import type { HexCoord, Model } from '../../shared/model/schema.ts'
@@ -46,6 +47,14 @@ export class Draft {
 
   /** Apply ops to the draft; a refusal throws DraftError with the model's own message (the agent reads it). */
   apply(ops: Op[]): void {
+    // The tools build ops from loose input; hold them to the schema the saved file must meet (a too-long field here
+    // would otherwise save fine and then stop the project from opening).
+    const checked = z.array(OpZ).safeParse(ops)
+    if (!checked.success) {
+      const i = checked.error.issues[0]
+      const where = i === undefined ? '' : i.path.filter((k) => typeof k === 'string').join('.')
+      throw new DraftError(`Invalid value${where === '' ? '' : ` for ${where}`}: ${i?.message ?? 'does not match the schema'}. Shorten or correct it and try again.`)
+    }
     try {
       this.#model = applyOps(this.#model, ops).model
     } catch (err) {
