@@ -1,6 +1,7 @@
 // "Fix with AI" on an error toast: the AI finds out why an action failed and fixes what is in the project, or says
 // what to do. It gets the action, the error and where the check failed, never the request's values (they may hold
 // tokens or private text).
+import { offersAi } from '../lib/viewer.ts'
 import { ask } from './ai.ts'
 import { toast } from './actions.ts'
 import { getState } from './store.ts'
@@ -8,7 +9,7 @@ import type { Toast } from './store.ts'
 
 export function canHealWithAi(): boolean {
   const s = getState()
-  return s.project !== null && s.ui.mode !== 'docs'
+  return s.project !== null && offersAi(s.ui.mode)
 }
 
 export function healWithAi(t: Toast): void {

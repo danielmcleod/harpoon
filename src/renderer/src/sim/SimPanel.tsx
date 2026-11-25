@@ -20,6 +20,7 @@ import { fixFailures, investigateTraffic, reviewFlows } from './investigate.ts'
 import { lintModel } from '@shared/model/lint.ts'
 import { useTrafficBreaks } from './useTrafficBreaks.ts'
 import { select } from '../state/actions.ts'
+import { isViewer, offersAi } from '../lib/viewer.ts'
 
 const FAULT_LABEL: Record<FaultType, string> = {
   down: 'Crash (node down)',
@@ -71,7 +72,7 @@ export function SimPanel(): React.JSX.Element {
   const flow = trace !== null ? model.flows[trace.flowId] : undefined
   const step = flow !== undefined && trace !== null ? flow.steps[trace.step] : undefined
   const stepConn = step !== undefined ? model.connectors[step.connectorId] : undefined
-  const editor = mode !== 'docs'
+  const ai = offersAi(mode)
 
   return (
     <aside className="scroll-region w-[360px] shrink-0 overflow-y-auto border-l bg-panel" aria-label="Simulation">
@@ -258,7 +259,7 @@ export function SimPanel(): React.JSX.Element {
       <section className="p-3">
         <div className="mb-2 flex items-center gap-2">
           <h3 className="flex-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Trace a flow</h3>
-          {editor && (
+          {ai && (
             <Button size="sm" variant="ghost" icon={<Sparkles />} onClick={() => reviewFlows(null)} title="The AI checks the flows against the code, fixes broken ones and adds missing journeys">
               Review flows with AI
             </Button>
@@ -276,7 +277,7 @@ export function SimPanel(): React.JSX.Element {
               {f.name}
             </button>
           ))}
-          {Object.keys(model.flows).length === 0 && <p className="text-xs text-muted-foreground">Add flows in the editor (project overview) to trace requests hop by hop.</p>}
+          {Object.keys(model.flows).length === 0 && !isViewer() && <p className="text-xs text-muted-foreground">Add flows in the editor (project overview) to trace requests hop by hop.</p>}
         </div>
         {flow !== undefined && trace !== null && (
           <div className="mt-2 rounded-md border bg-background p-2">
@@ -315,13 +316,13 @@ export function SimPanel(): React.JSX.Element {
 function TrafficStops(): React.JSX.Element | null {
   const breaks = useTrafficBreaks()
   const model = useStore((s) => s.project?.model)
-  const editor = useStore((s) => s.ui.mode !== 'docs')
+  const ai = useStore((s) => offersAi(s.ui.mode))
   if (breaks.length === 0 || model === undefined) return null
   return (
     <section className="border-b p-3">
       <div className="mb-2 flex items-center gap-2">
         <h3 className="flex-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Where traffic stops ({breaks.length})</h3>
-        {editor && (
+        {ai && (
           <Button size="sm" variant="ghost" icon={<Sparkles />} onClick={() => investigateTraffic(null)} title="The AI reads the code and infrastructure to find the real path, and proposes fixes">
             Investigate all
           </Button>
@@ -337,7 +338,7 @@ function TrafficStops(): React.JSX.Element | null {
                 <span className="mt-0.5 block text-muted-foreground">{b.hint}</span>
               </span>
             </button>
-            {editor && (
+            {ai && (
               <button type="button" className="mt-1 ml-5 text-[11px] text-primary hover:underline" onClick={() => investigateTraffic(b.nodeId)}>
                 Investigate with AI
               </button>
@@ -352,7 +353,7 @@ function TrafficStops(): React.JSX.Element | null {
 /** A traced flow's problems (steps that do not link up or run the wrong way), with an AI fix. */
 function FlowProblems({ flowId }: { flowId: string }): React.JSX.Element | null {
   const model = useStore((s) => s.project?.model)
-  const editor = useStore((s) => s.ui.mode !== 'docs')
+  const ai = useStore((s) => offersAi(s.ui.mode))
   const problems = useMemo(() => (model === undefined ? [] : lintModel(model).filter((p) => p.code.startsWith('flow-') && p.flowId === flowId)), [model, flowId])
   if (problems.length === 0) return null
   return (
@@ -360,7 +361,7 @@ function FlowProblems({ flowId }: { flowId: string }): React.JSX.Element | null 
       {problems.map((p, i) => (
         <p key={i}>{p.message}</p>
       ))}
-      {editor && (
+      {ai && (
         <button type="button" className="mt-1 text-primary hover:underline" onClick={() => reviewFlows(flowId)}>
           Fix this flow with AI
         </button>
@@ -407,7 +408,7 @@ function ForceButton({ id }: { id: string }): React.JSX.Element {
 /** What is strained or failing right now: root causes first (with an AI fix and force healthy), then knock-ons. */
 function Failing({ frame }: { frame: Frame }): React.JSX.Element | null {
   const model = useStore((s) => s.project?.model)
-  const editor = useStore((s) => s.ui.mode !== 'docs')
+  const ai = useStore((s) => offersAi(s.ui.mode))
   const report = useMemo(() => (model === undefined ? null : failureReport(model, frame)), [model, frame])
   if (report === null || model === undefined || report.roots.length === 0) return null
   const names = new Map(report.roots.map((r) => [r.key, r.name]))
@@ -415,7 +416,7 @@ function Failing({ frame }: { frame: Frame }): React.JSX.Element | null {
     <section className="border-b p-3" aria-label="What is failing">
       <div className="mb-2 flex items-center gap-2">
         <h3 className="flex-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">What&apos;s failing ({report.roots.length})</h3>
-        {editor && (
+        {ai && (
           <Button size="sm" variant="ghost" icon={<Sparkles />} onClick={() => fixFailures(null)} title="The AI reproduces this scenario, proposes changes that survive it and checks them in the simulator">
             Fix all with AI
           </Button>
@@ -432,7 +433,7 @@ function Failing({ frame }: { frame: Frame }): React.JSX.Element | null {
             <div className="ml-5">
               <Reasons reasons={r.reasons} />
               <div className="mt-1 flex gap-3 text-[11px]">
-                {editor && (
+                {ai && (
                   <button type="button" className="text-primary hover:underline" onClick={() => fixFailures(r.key)}>
                     Fix with AI
                   </button>

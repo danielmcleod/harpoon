@@ -7,6 +7,7 @@ import type { Problem, Severity } from '@shared/model/lint.ts'
 import { moveAllStraysOps, quickFix } from '@shared/model/quickfix.ts'
 import { Button } from '../components/ui/Button.tsx'
 import { cn } from '../lib/cn.ts'
+import { isViewer } from '../lib/viewer.ts'
 import { edit, select, setMode, toast } from '../state/actions.ts'
 import { setUi, useStore } from '../state/store.ts'
 import { useModel } from '../canvas/useScene.ts'
@@ -97,7 +98,8 @@ export function ProblemItem({ problem: p, editable, ticked, onTick }: { problem:
           else if (p.connectorId !== undefined) select({ kind: 'connector', ids: [p.connectorId] })
           else if (p.boundaryId !== undefined) select({ kind: 'boundary', ids: [p.boundaryId] })
           else if (p.flowId !== undefined) {
-            setMode('edit')
+            // The exported viewer stays read-only: show the flow without switching to Edit.
+            if (!isViewer()) setMode('edit')
             setUi({ flowId: p.flowId })
           }
         }}

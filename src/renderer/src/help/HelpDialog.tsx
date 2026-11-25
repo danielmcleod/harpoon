@@ -4,6 +4,7 @@ import { X } from 'lucide-react'
 import { Button } from '../components/ui/Button.tsx'
 import { Kbd } from '../components/ui/Kbd.tsx'
 import { cn } from '../lib/cn.ts'
+import { isViewer } from '../lib/viewer.ts'
 import { KEYS, useShortcut } from '../lib/keys.ts'
 import { setUi, useStore } from '../state/store.ts'
 import { AiNote } from '../ai/AiNote.tsx'
@@ -48,7 +49,7 @@ export function HelpDialog(): React.JSX.Element | null {
           </div>
           <div className="flex min-h-0 flex-1">
             <nav aria-label="Help topics" className="flex w-48 shrink-0 flex-col gap-0.5 border-r p-2">
-              {HELP_TOPICS.map((t) => (
+              {HELP_TOPICS.filter((t) => t !== 'ai' || !isViewer()).map((t) => (
                 <button
                   key={t}
                   type="button"
