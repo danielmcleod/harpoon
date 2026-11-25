@@ -371,6 +371,8 @@ export class Simulator {
     for (const id of entries) add(id, (m.nodes[id]?.sim?.entryRps ?? DEFAULT_ENTRY_RPS) * factor)
 
     const edges: Record<string, EdgeFrame> = {}
+    // Links that fail on their own this tick (cut, breaker open, timed out): they fail every call whatever the callee.
+    const linkDown = new Set<string>()
     const waiting = new Map<string, number>()
     for (const r of this.#order) {
       const c = r.connector
@@ -399,6 +401,7 @@ export class Simulator {
       const timedOut = !safe && c.policies.timeoutMs !== null && nodeLat(c.target) > c.policies.timeoutMs
       if (timedOut && !cut && !open) why.push({ kind: 'timeout', latencyMs: nodeLat(c.target), timeoutMs: c.policies.timeoutMs ?? 0 })
       let err = cut || open ? 1 : timedOut ? 1 : 0
+      if (err === 1) linkDown.add(c.id)
       // A consumer behind a queue or stream pulls at most what it can take now (nothing while it is down or cut
       // off, or the broker is down); the rest waits on the broker, each consumer link with its own backlog.
       const src = m.nodes[c.source]
@@ -490,7 +493,9 @@ export class Simulator {
       if (e === undefined) continue
       // A soft dependency fails without failing its caller (fallback, cache).
       if (c.sync === 'sync' && c.dependency !== 'soft' && !forced.has(c.source)) {
-        const calleeErr = forced.has(c.id) ? 0 : e.breakerOpen || e.rps === 0 ? e.errorRate : Math.max(e.errorRate, nodeErrNow.get(c.target) ?? 0)
+        // The callee's error this tick, not last tick's: carried over, it would go round a loop of calls (A → B → A)
+        // and be added again every tick until the whole loop failed with no cause.
+        const calleeErr = forced.has(c.id) ? 0 : linkDown.has(c.id) ? 1 : (nodeErrNow.get(c.target) ?? 0)
         e.errorRate = calleeErr
         const share = Math.min(1, c.sim?.fanout ?? 1)
         nodeErrNow.set(c.source, Math.min(1, 1 - (1 - (nodeErrNow.get(c.source) ?? 0)) * (1 - calleeErr * share)))
